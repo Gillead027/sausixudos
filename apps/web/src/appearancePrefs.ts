@@ -45,7 +45,12 @@ export function applyMessageSpacingStep(step: number): void {
 }
 
 export function applyUiZoomStep(step: number): void {
-  document.documentElement.setAttribute('data-ui-zoom-scale', String(UI_ZOOM_SCALES[step]));
+  // Zoom via CSS (a propriedade "zoom") encolhe a caixa em vez de redistribuir
+  // o layout, deixando espaço vazio em volta num layout full-bleed (100vw/100vh
+  // calculados antes do fator aplicar). O zoom nativo do Electron/Chromium (o
+  // mesmo do Ctrl+scroll) recalcula as unidades de viewport de verdade — por
+  // isso essa função pede pro processo principal aplicar, em vez de mexer no CSS.
+  window.desktop?.setZoomFactor?.((UI_ZOOM_SCALES[step] ?? 100) / 100);
 }
 
 export function setChatFontStep(step: number): void {

@@ -114,16 +114,6 @@
 [data-message-spacing-scale="125"] .message { margin-bottom: 17.5px; }
 [data-message-spacing-scale="150"] .message { margin-bottom: 21px; }
 [data-message-spacing-scale="175"] .message { margin-bottom: 24.5px; }
-/* zoom vai no <html>, não num filho de tamanho fixo (100vw/100vh) — nele,
-   o zoom encolhe a caixa mas o espaço ao redor continua vazio, porque o
-   100% já foi calculado antes do zoom aplicar. No <html>, o Chromium
-   recalcula unidades de viewport/porcentagem já considerando o zoom,
-   igual ao zoom de página do navegador (Ctrl+scroll). */
-html[data-ui-zoom-scale="90"] { zoom: .9; }
-html[data-ui-zoom-scale="100"] { zoom: 1; }
-html[data-ui-zoom-scale="110"] { zoom: 1.1; }
-html[data-ui-zoom-scale="125"] { zoom: 1.25; }
-html[data-ui-zoom-scale="150"] { zoom: 1.5; }
 
 /* Mensagens agrupadas — esconde cabeçalho repetido quando a mensagem anterior é do mesmo autor */
 .messages.grouped .message.continued { grid-template-columns: 25px minmax(0, 1fr); margin-bottom: 2px; }

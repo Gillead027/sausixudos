@@ -112,6 +112,7 @@ declare global {
   interface Window {
     desktop?: {
       chooseShareSource: () => Promise<{ quality: ShareQuality; shareAudio: boolean } | null>;
+      setZoomFactor: (factor: number) => void;
     };
   }
 }

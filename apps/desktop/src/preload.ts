@@ -7,4 +7,5 @@ export interface SharePickerChoice {
 
 contextBridge.exposeInMainWorld('desktop', {
   chooseShareSource: (): Promise<SharePickerChoice | null> => ipcRenderer.invoke('share-picker:open'),
+  setZoomFactor: (factor: number): void => ipcRenderer.send('set-zoom-factor', Number(factor)),
 });

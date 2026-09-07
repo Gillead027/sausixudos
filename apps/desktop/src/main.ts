@@ -110,6 +110,15 @@ function installPickerIpc(): void {
     }
   });
 
+  // CSS zoom deixa espaço vazio em layouts full-bleed (100vw/100vh calculado
+  // antes do fator aplicar); o zoom nativo do Chromium (o mesmo do Ctrl+scroll)
+  // recalcula as unidades de viewport corretamente, sem esse problema.
+  ipcMain.on('set-zoom-factor', (event, factor: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    if (typeof factor !== 'number' || !Number.isFinite(factor) || factor <= 0 || factor > 3) return;
+    mainWindow.webContents.setZoomFactor(factor);
+  });
+
   ipcMain.handle('share-picker:open', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
