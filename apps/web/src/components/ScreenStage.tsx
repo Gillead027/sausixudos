@@ -159,7 +159,12 @@ export function ScreenStage({
   // galeria). Transmissão de tela é opt-in: assistida vira o tile grande em
   // foco, não assistida fica como um card na galeria com "Ver transmissão"
   // no hover — nunca misturados em blocos do mesmo tamanho.
-  const cameraTiles = screens.filter((screen) => screen.publication.source === Track.Source.Camera);
+  // isMuted fica true quando a câmera é desligada sem desfazer a publicação
+  // (comum ao trocar de dispositivo) — sem esse filtro, sobra um tile preto
+  // na galeria pra uma câmera que a pessoa já apagou.
+  const cameraTiles = screens.filter(
+    (screen) => screen.publication.source === Track.Source.Camera && !screen.publication.isMuted,
+  );
   const shareScreens = screens.filter((screen) => screen.publication.source === Track.Source.ScreenShare);
   const heroShares = shareScreens.filter((screen) => watchingIds.has(screen.id));
   const unwatchedShares = shareScreens.filter((screen) => !watchingIds.has(screen.id));

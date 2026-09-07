@@ -419,9 +419,9 @@ button:disabled { cursor: default; opacity: .45; }
 .hero-row { min-height: 0; flex: 1; display: flex; gap: 1px; }
 .hero-tile { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; background: #0b0d0f; animation: tile-in 380ms cubic-bezier(.16, 1, .3, 1); }
 .hero-tile video { position: relative; z-index: 1; width: 100%; height: 100%; display: block; object-fit: contain; }
-.hero-tile-overlay { position: absolute; inset: 0; z-index: 3; display: flex; align-items: flex-start; justify-content: flex-end; padding: 10px; opacity: 0; background: linear-gradient(180deg, rgba(0, 0, 0, .55) 0%, transparent 40%); transition: opacity 150ms; }
+.hero-tile-overlay { position: absolute; inset: 0; z-index: 3; display: flex; align-items: flex-start; justify-content: flex-end; padding: 10px; opacity: 0; background: linear-gradient(180deg, rgba(0, 0, 0, .55) 0%, transparent 40%); transition: opacity 150ms; pointer-events: none; }
 .hero-tile:hover .hero-tile-overlay { opacity: 1; }
-.hero-stop-watching { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-primary); background: rgba(20, 22, 24, .85); cursor: pointer; font-size: 11px; font-weight: 600; }
+.hero-stop-watching { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-primary); background: rgba(20, 22, 24, .85); cursor: pointer; font-size: 11px; font-weight: 600; pointer-events: auto; }
 .hero-stop-watching:hover { background: rgba(35, 38, 41, .95); }
 
 /* Câmeras nunca competem em tamanho com a transmissão em foco — ficam numa
