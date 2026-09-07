@@ -71,7 +71,7 @@ services:
       VOICE_CHANNELS: "${VOICE_CHANNELS:-geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida}"
       YTDLP_COOKIES_FILE: /app/cookies.txt
     volumes:
-      - ./secrets/youtube-cookies.txt:/app/cookies.txt:ro
+      - ./secrets/youtube-cookies.txt:/app/cookies.txt
     restart: unless-stopped
 
   livekit:
