@@ -44,6 +44,7 @@ export interface VoiceChannel {
 export interface RoomParticipantSummary {
   identity: string;
   name: string;
+  isSharingScreen: boolean;
 }
 
 export interface RoomSummary extends VoiceChannel {

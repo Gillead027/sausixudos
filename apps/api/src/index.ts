@@ -2,7 +2,7 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk';
 import { z } from 'zod';
 import {
   ACCENT_COLORS,
@@ -357,6 +357,7 @@ app.get('/api/rooms', requireSession, async (_request, response, next) => {
           participants: participants.map((participant) => ({
             identity: participant.identity,
             name: participant.name || participant.identity,
+            isSharingScreen: participant.tracks.some((track) => track.source === TrackSource.SCREEN_SHARE),
           })),
         };
       }),

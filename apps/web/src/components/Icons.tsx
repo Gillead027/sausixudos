@@ -78,6 +78,14 @@ export function SpeakerIcon(props: IconProps) {
   return <Icon {...props}><path d="M4 9v6h4l5 4V5L8 9H4Z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /></Icon>;
 }
 
+export function EyeIcon(props: IconProps) {
+  return <Icon {...props}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="3" /></Icon>;
+}
+
+export function EyeOffIcon(props: IconProps) {
+  return <Icon {...props}><path d="M2.5 12S6 5.5 12 5.5c1.6 0 3 .4 4.2 1M21.5 12S18 18.5 12 18.5c-1.6 0-3-.4-4.2-1" /><path d="M4 4l16 16M9.5 9.7A3 3 0 0 0 14.3 14.5" /></Icon>;
+}
+
 export function SearchIcon(props: IconProps) {
   return <Icon {...props}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></Icon>;
 }

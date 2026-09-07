@@ -341,7 +341,8 @@ function ChannelButton({
             ownIdentity={ownIdentity}
             ownAvatarUrl={ownAvatarUrl}
           />
-          <span>{participant.name}</span>
+          <span className="channel-user-name">{participant.name}</span>
+          {participant.isSharingScreen && <span className="live-badge live-badge-inline">AO VIVO</span>}
         </div>
       ))}
     </div>
@@ -1766,6 +1767,13 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                     setStreamVolume={(identity, value) => setStreamVolumes((current) => ({ ...current, [identity]: value }))}
                     watchingIds={watchingScreenIds}
                     onWatch={(id) => setWatchingScreenIds((current) => new Set(current).add(id))}
+                    onStopWatching={(id) =>
+                      setWatchingScreenIds((current) => {
+                        const next = new Set(current);
+                        next.delete(id);
+                        return next;
+                      })
+                    }
                   />
                 ) : (
                   <div className="voice-idle-stage">
