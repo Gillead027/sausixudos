@@ -427,6 +427,8 @@ button:disabled { cursor: default; opacity: .45; }
 .stream-skeleton span:nth-child(3) { width: 48%; }
 .screen-stage:fullscreen { border: 0; }
 .screen-stage:fullscreen .screen-grid { height: calc(100vh - 36px); }
+.screen-stage.native-fullscreen { position: fixed; inset: 0; z-index: 1000; width: 100vw; height: 100vh; border: 0; border-radius: 0; background: #08090a; }
+.screen-stage.native-fullscreen .screen-grid { height: calc(100vh - 36px); }
 .fullscreen-error { flex: 0 0 auto; padding: 7px 10px; color: #f0b6b8; background: #361d20; font-size: 11px; text-align: center; }
 
 /* Controles de voz */
@@ -590,11 +592,13 @@ button:disabled { cursor: default; opacity: .45; }
 .mic-test-meter { display: flex; align-items: flex-end; gap: 2px; flex: 1; height: 18px; }
 .mic-test-meter span { flex: 1; height: 100%; border-radius: 1px; background: #26282c; transition: background-color 80ms; }
 .mic-test-meter span.lit { background: var(--accent-hover); }
-.camera-preview { display: flex; align-items: center; gap: 12px; }
+.camera-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .camera-preview-frame { position: relative; width: 160px; height: 90px; border-radius: var(--radius-sm); overflow: hidden; background: #1a1b1e; }
 .camera-preview-frame video { width: 100%; height: 100%; object-fit: cover; display: none; }
 .camera-preview-frame video.active { display: block; }
 .camera-preview-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-muted); }
+.camera-permission-error { width: 100%; display: grid; gap: 8px; color: #f0b6b8; font-size: 11px; line-height: 1.45; }
+.camera-permission-error button { width: max-content; color: #f0b6b8; cursor: pointer; text-decoration: underline; }
 
 /* Aparência: tema, densidade/estilo (3 vias), sliders discretos, cor local */
 .theme-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; max-width: 560px; }
@@ -615,6 +619,10 @@ button:disabled { cursor: default; opacity: .45; }
 .ui-accent-hex input[type="text"] { width: 110px; font-family: monospace; }
 .ui-accent-hex input[type="color"] { width: 32px; height: 32px; padding: 0; border: 1px solid var(--border-light); border-radius: 50%; overflow: hidden; cursor: pointer; background: none; }
 .settings-toggle-row { display: flex; align-items: center; justify-content: space-between; max-width: 400px; margin-top: 14px; }
+.voice-processing-toggle { max-width: 620px; align-items: flex-start; gap: 20px; padding: 12px 0; }
+.voice-processing-toggle .settings-label { margin: 0 0 5px; }
+.voice-processing-toggle .settings-hint { margin: 0; max-width: 480px; }
+.voice-processing-toggle .settings-switch { margin-top: 2px; }
 .settings-switch { position: relative; width: 36px; height: 20px; flex: 0 0 auto; border-radius: var(--radius-pill); background: var(--border-light); cursor: pointer; transition: background-color 140ms; }
 .settings-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 140ms; }
 .settings-switch.on { background: var(--accent); }

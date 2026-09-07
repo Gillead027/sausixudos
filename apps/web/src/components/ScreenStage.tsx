@@ -68,27 +68,57 @@ export function ScreenStage({
   useEffect(() => {
     const handleFullscreenChange = () => setFullscreen(document.fullscreenElement === stageRef.current);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    let unsubscribeDesktop: (() => void) | undefined;
+    if (window.desktop?.getFullscreen) {
+      void window.desktop.getFullscreen().then(setFullscreen).catch(() => {});
+      unsubscribeDesktop = window.desktop.onFullscreenChanged?.(setFullscreen);
+    }
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      unsubscribeDesktop?.();
+    };
   }, []);
 
+  useEffect(() => {
+    if (!fullscreen || !window.desktop?.setFullscreen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') void window.desktop?.setFullscreen?.(false);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [fullscreen]);
+
   async function toggleFullscreen() {
+    console.log('[fullscreen] toggle clicked, current=', fullscreen, 'hasDesktopApi=', Boolean(window.desktop?.setFullscreen));
     const stage = stageRef.current;
-    if (!stage) return;
+    if (!stage) {
+      console.error('[fullscreen] stageRef.current is null, aborting');
+      return;
+    }
     setFullscreenError('');
     try {
+      if (window.desktop?.setFullscreen) {
+        const nextFullscreen = !fullscreen;
+        console.log('[fullscreen] calling window.desktop.setFullscreen(', nextFullscreen, ')');
+        const result = await window.desktop.setFullscreen(nextFullscreen);
+        console.log('[fullscreen] setFullscreen resolved with', result);
+        setFullscreen(nextFullscreen);
+        return;
+      }
       if (document.fullscreenElement === stage) {
         await document.exitFullscreen();
       } else {
         if (document.fullscreenElement) await document.exitFullscreen();
         await stage.requestFullscreen();
       }
-    } catch {
+    } catch (error) {
+      console.error('[fullscreen] toggleFullscreen threw:', error);
       setFullscreenError('Não foi possível ativar a tela cheia. Tente novamente.');
     }
   }
 
   return (
-    <div className={`screen-stage screens-${Math.min(screens.length, 4)}`} ref={stageRef}>
+    <div className={`screen-stage screens-${Math.min(screens.length, 4)} ${fullscreen ? 'native-fullscreen' : ''}`} ref={stageRef}>
       <div className="stream-toolbar">
         <span>{screens.length === 1 ? '1 transmissão' : `${screens.length} transmissões`}</span>
         <button

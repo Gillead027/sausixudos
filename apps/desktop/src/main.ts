@@ -6,6 +6,8 @@ import {
   ipcMain,
   Menu,
   session,
+  shell,
+  systemPreferences,
   type DesktopCapturerSource,
 } from 'electron';
 import { appendFileSync, readFileSync } from 'node:fs';
@@ -102,6 +104,10 @@ function isAllowedAppUrl(candidate: string, appOrigin: string): boolean {
   }
 }
 
+function isAllowedPermissionOrigin(appOrigin: string, ...candidates: Array<string | undefined>): boolean {
+  return candidates.some((candidate) => candidate && isAllowedAppUrl(candidate, appOrigin));
+}
+
 function finishCapture(choice: CaptureChoice | null): void {
   const capture = pendingCapture;
   if (!capture) return;
@@ -151,7 +157,8 @@ function installPickerIpc(): void {
     mainWindow.webContents.setZoomFactor(factor);
   });
 
-  ipcMain.handle('share-picker:open', async () => {
+  ipcMain.handle('share-picker:open', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
       thumbnailSize: { width: 320, height: 180 },
@@ -161,6 +168,40 @@ function installPickerIpc(): void {
     if (!choice) return null;
     preArmedCapture = { ...choice, armedAt: Date.now() };
     return { quality: choice.quality, shareAudio: choice.shareAudio };
+  });
+
+  ipcMain.handle('window:set-fullscreen', (event, enabled: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || typeof enabled !== 'boolean') return false;
+    debugLog(`native fullscreen requested enabled=${enabled}`);
+    mainWindow.setFullScreen(enabled);
+    return enabled;
+  });
+
+  ipcMain.handle('window:get-fullscreen', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return false;
+    return mainWindow.isFullScreen();
+  });
+
+  ipcMain.handle('media:get-access-status', (event, mediaType: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return 'unknown';
+    if (mediaType !== 'camera' && mediaType !== 'microphone') return 'unknown';
+    try {
+      return systemPreferences.getMediaAccessStatus(mediaType);
+    } catch (error) {
+      debugLog(`getMediaAccessStatus failed mediaType=${mediaType}: ${String(error)}`);
+      return 'unknown';
+    }
+  });
+
+  ipcMain.handle('media:open-settings', async (event, mediaType: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return false;
+    if (mediaType !== 'camera' && mediaType !== 'microphone') return false;
+    if (process.platform !== 'win32') return false;
+    const settingsUrl = mediaType === 'camera'
+      ? 'ms-settings:privacy-webcam'
+      : 'ms-settings:privacy-microphone';
+    await shell.openExternal(settingsUrl);
+    return true;
   });
 }
 
@@ -247,17 +288,66 @@ function installSessionSecurity(appUrl: URL): void {
   });
 
   session.defaultSession.setPermissionCheckHandler(
-    (_webContents, permission, requestingOrigin) =>
-      (permission === 'media' || permission === 'fullscreen') &&
-      isAllowedAppUrl(requestingOrigin, appOrigin),
+    (webContents, permission, requestingOrigin, details) => {
+      const allowedPermission =
+        permission === 'media' ||
+        permission === 'fullscreen' ||
+        permission === 'automatic-fullscreen' ||
+        permission === 'display-capture' ||
+        permission === 'speaker-selection';
+      const allowedOrigin = isAllowedPermissionOrigin(
+        appOrigin,
+        requestingOrigin,
+        details.securityOrigin,
+        details.requestingUrl,
+        webContents?.getURL(),
+      );
+      // O Chromium 152 faz uma pré-checagem de câmera/microfone enquanto a
+      // BrowserWindow ainda está navegando. Nessa chamada todos os campos de
+      // origem chegam vazios; negar aqui fica em cache e bloqueia o pedido real
+      // que vem logo depois. A pré-checagem pode passar porque a autorização
+      // efetiva continua sendo validada por origem no RequestHandler abaixo.
+      const originlessMediaPreflight =
+        permission === 'media' &&
+        !requestingOrigin &&
+        !details.securityOrigin &&
+        !details.requestingUrl &&
+        !webContents?.getURL();
+      const granted = allowedPermission && (allowedOrigin || originlessMediaPreflight);
+      debugLog(
+        `permission-check permission=${permission} mediaType=${details.mediaType || '-'} requestingOrigin=${requestingOrigin || '-'} securityOrigin=${details.securityOrigin || '-'} requestingUrl=${details.requestingUrl || '-'} webContentsUrl=${webContents?.getURL() || '-'} preflight=${originlessMediaPreflight} originAllowed=${allowedOrigin} granted=${granted}`,
+      );
+      return granted;
+    },
   );
 
   session.defaultSession.setPermissionRequestHandler(
-    (_webContents, permission, callback, details) => {
-      callback(
-        (permission === 'media' || permission === 'fullscreen') &&
-        isAllowedAppUrl(details.requestingUrl, appOrigin),
+    (webContents, permission, callback, details) => {
+      const securityOrigin = 'securityOrigin' in details ? details.securityOrigin : undefined;
+      const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined;
+      const allowedPermission =
+        permission === 'media' ||
+        permission === 'fullscreen' ||
+        permission === 'automatic-fullscreen' ||
+        permission === 'display-capture' ||
+        permission === 'speaker-selection';
+      const allowedOrigin = isAllowedPermissionOrigin(
+        appOrigin,
+        details.requestingUrl,
+        securityOrigin,
+        webContents.getURL(),
       );
+      const granted = allowedPermission && allowedOrigin;
+      const cameraStatus = mediaTypes?.includes('video')
+        ? systemPreferences.getMediaAccessStatus('camera')
+        : 'not-requested';
+      const microphoneStatus = mediaTypes?.includes('audio')
+        ? systemPreferences.getMediaAccessStatus('microphone')
+        : 'not-requested';
+      debugLog(
+        `permission-request permission=${permission} mediaTypes=${mediaTypes?.join(',') || '-'} originAllowed=${allowedOrigin} camera=${cameraStatus} microphone=${microphoneStatus} granted=${granted}`,
+      );
+      callback(granted);
     },
   );
 
@@ -346,8 +436,22 @@ function createMainWindow(appUrl: URL): BrowserWindow {
     if (isReloadCombo || input.key === 'F5') {
       event.preventDefault();
       window.webContents.reloadIgnoringCache();
+    } else if (input.key === 'F11') {
+      event.preventDefault();
+      window.setFullScreen(!window.isFullScreen());
+    } else if (input.key === 'Escape' && window.isFullScreen()) {
+      event.preventDefault();
+      window.setFullScreen(false);
     }
   });
+  const emitFullscreenState = () => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+    const fullscreen = window.isFullScreen();
+    debugLog(`native fullscreen changed enabled=${fullscreen}`);
+    window.webContents.send('window:fullscreen-changed', fullscreen);
+  };
+  window.on('enter-full-screen', emitFullscreenState);
+  window.on('leave-full-screen', emitFullscreenState);
   window.once('ready-to-show', () => {
     debugLog('ready-to-show fired, calling show()');
     window.show();
@@ -364,6 +468,16 @@ function createMainWindow(appUrl: URL): BrowserWindow {
   });
   window.webContents.on('did-finish-load', () => debugLog('did-finish-load'));
   window.webContents.on('dom-ready', () => debugLog('dom-ready'));
+  // DevTools fica desligado no build empacotado, então sem isso nenhum
+  // console.error/warn/log da página (nem exceções não tratadas do React)
+  // chegam a algum lugar que dê pra ler depois.
+  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const levelName = ['verbose', 'info', 'warning', 'error'][level] ?? String(level);
+    debugLog(`renderer console [${levelName}] ${message} (${sourceId}:${line})`);
+  });
+  window.webContents.on('preload-error', (_event, preloadPath, error) => {
+    debugLog(`preload-error path=${preloadPath} error=${error.stack || error.message}`);
+  });
   window.webContents.on('render-process-gone', (_event, details) => debugLog(`render-process-gone: ${JSON.stringify(details)}`));
   window.webContents.on('unresponsive', () => debugLog('webContents unresponsive'));
   window.webContents.on('responsive', () => debugLog('webContents responsive again'));

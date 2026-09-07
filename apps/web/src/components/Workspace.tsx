@@ -12,6 +12,7 @@ import { AVATAR_DATA_URL_MAX_LENGTH, BANNER_DATA_URL_MAX_LENGTH } from '@sausixu
 import { api } from '../api';
 import { useDelayedUnmount } from '../hooks/useDelayedUnmount';
 import { type InputMode, type ShareQuality, useVoiceRoom } from '../livekit/useVoiceRoom';
+import { describeMediaError } from '../mediaAccess';
 import { getPerfMode, type PerfMode, setPerfMode } from '../perfMode';
 import { getDensity, type Density, setDensity } from '../density';
 import { getTheme, type ThemeMode, setTheme } from '../theme';
@@ -110,6 +111,11 @@ declare global {
     desktop?: {
       chooseShareSource: () => Promise<{ quality: ShareQuality; shareAudio: boolean } | null>;
       setZoomFactor: (factor: number) => void;
+      setFullscreen: (enabled: boolean) => Promise<boolean>;
+      getFullscreen: () => Promise<boolean>;
+      onFullscreenChanged: (listener: (enabled: boolean) => void) => (() => void);
+      getMediaAccessStatus: (mediaType: 'camera' | 'microphone') => Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'>;
+      openMediaSettings: (mediaType: 'camera' | 'microphone') => Promise<boolean>;
     };
   }
 }
@@ -491,6 +497,7 @@ function MicTest({ deviceId }: { deviceId: string }) {
 
 function CameraPreview({ deviceId }: { deviceId: string }) {
   const [testing, setTesting] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -504,6 +511,7 @@ function CameraPreview({ deviceId }: { deviceId: string }) {
   useEffect(() => () => stopPreview(), []);
 
   async function startPreview() {
+    setPreviewError('');
     try {
       const constraints: MediaStreamConstraints = {
         video: deviceId === 'default' ? true : { deviceId: { exact: deviceId } },
@@ -512,8 +520,9 @@ function CameraPreview({ deviceId }: { deviceId: string }) {
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setTesting(true);
-    } catch {
+    } catch (error) {
       stopPreview();
+      setPreviewError(await describeMediaError(error, 'camera'));
     }
   }
 
@@ -530,6 +539,16 @@ function CameraPreview({ deviceId }: { deviceId: string }) {
       <button type="button" className="test-toggle-button" onClick={() => (testing ? stopPreview() : void startPreview())}>
         {testing ? 'Parar' : 'Testar vídeo'}
       </button>
+      {previewError && (
+        <div className="camera-permission-error" role="alert">
+          <span>{previewError}</span>
+          {window.desktop?.openMediaSettings && (
+            <button type="button" onClick={() => void window.desktop?.openMediaSettings?.('camera')}>
+              Abrir permissões
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -590,6 +609,8 @@ function SettingsModal({
   setInputMode,
   pttKey,
   setPttKeyBinding,
+  noiseSuppressionEnabled,
+  setNoiseSuppression,
 }: {
   open: boolean;
   onClose: () => void;
@@ -646,6 +667,8 @@ function SettingsModal({
   setInputMode: (mode: InputMode) => void;
   pttKey: string;
   setPttKeyBinding: (code: string) => void;
+  noiseSuppressionEnabled: boolean;
+  setNoiseSuppression: (enabled: boolean) => void;
 }) {
   const [listeningForKey, setListeningForKey] = useState(false);
   const [voiceSearch, setVoiceSearch] = useState('');
@@ -946,6 +969,23 @@ function SettingsModal({
                     <span className="settings-label">Teste de microfone</span>
                     <MicTest deviceId={selectedMicId} />
                   </>
+                )}
+
+                {matchesSearch('supressão de ruído cancelamento de eco ganho automático') && (
+                  <div className="settings-toggle-row voice-processing-toggle">
+                    <div>
+                      <span className="settings-label">Supressão de ruído</span>
+                      <p className="settings-hint">Reduz ventilador, teclado e ruídos constantes. Cancelamento de eco e ganho automático permanecem ativos.</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-label="Supressão de ruído"
+                      aria-checked={noiseSuppressionEnabled}
+                      className={`settings-switch ${noiseSuppressionEnabled ? 'on' : ''}`}
+                      onClick={() => setNoiseSuppression(!noiseSuppressionEnabled)}
+                    />
+                  </div>
                 )}
 
                 {matchesSearch('modo de entrada') && (
@@ -1497,6 +1537,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         setInputMode={voice.setInputMode}
         pttKey={voice.pttKey}
         setPttKeyBinding={voice.setPttKeyBinding}
+        noiseSuppressionEnabled={voice.noiseSuppressionEnabled}
+        setNoiseSuppression={(enabled) => void voice.setNoiseSuppression(enabled)}
       />
       <CreateTextChannelDialog
         open={createTextChannelOpen}
