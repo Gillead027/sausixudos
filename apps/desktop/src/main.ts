@@ -258,8 +258,13 @@ function installSessionSecurity(appUrl: URL): void {
   );
 
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    // O seletor proprio e aberto antes do getDisplayMedia. Enquanto o usuario
+    // escolhe a fonte, a ativacao transitoria do clique expira no Chromium;
+    // nesse fluxo, a fonte pre-armada e a autorizacao explicita e recente.
+    const hasFreshPreArmedCapture =
+      preArmedCapture !== null && Date.now() - preArmedCapture.armedAt < PRE_ARM_TTL_MS;
     if (
-      !request.userGesture ||
+      (!request.userGesture && !hasFreshPreArmedCapture) ||
       !request.videoRequested ||
       !isAllowedAppUrl(request.securityOrigin, appOrigin)
     ) {
@@ -270,7 +275,7 @@ function installSessionSecurity(appUrl: URL): void {
     let callbackUsed = false;
     try {
       let choice: CaptureChoice | null;
-      if (preArmedCapture && Date.now() - preArmedCapture.armedAt < PRE_ARM_TTL_MS) {
+      if (hasFreshPreArmedCapture && preArmedCapture) {
         choice = preArmedCapture;
         preArmedCapture = null;
       } else {
