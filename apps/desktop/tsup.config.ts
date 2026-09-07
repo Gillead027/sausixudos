@@ -15,6 +15,7 @@ export default defineConfig([
     splitting: false,
     sourcemap: false,
     external: ['electron'],
+    noExternal: ['electron-updater'],
   },
   {
     entry: { 'picker-renderer': 'src/picker-renderer.ts' },

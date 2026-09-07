@@ -10,6 +10,7 @@ import {
 } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { initAutoUpdater } from './updater.js';
 
 interface DesktopConfig {
   appUrl: string;
@@ -280,6 +281,7 @@ if (hasSingleInstanceLock) {
     mainWindow.once('closed', () => {
       mainWindow = null;
     });
+    initAutoUpdater();
   });
 }
 
