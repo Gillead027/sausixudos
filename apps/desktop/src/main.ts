@@ -248,12 +248,16 @@ function installSessionSecurity(appUrl: URL): void {
 
   session.defaultSession.setPermissionCheckHandler(
     (_webContents, permission, requestingOrigin) =>
-      permission === 'media' && isAllowedAppUrl(requestingOrigin, appOrigin),
+      (permission === 'media' || permission === 'fullscreen') &&
+      isAllowedAppUrl(requestingOrigin, appOrigin),
   );
 
   session.defaultSession.setPermissionRequestHandler(
     (_webContents, permission, callback, details) => {
-      callback(permission === 'media' && isAllowedAppUrl(details.requestingUrl, appOrigin));
+      callback(
+        (permission === 'media' || permission === 'fullscreen') &&
+        isAllowedAppUrl(details.requestingUrl, appOrigin),
+      );
     },
   );
 

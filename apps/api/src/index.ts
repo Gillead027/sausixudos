@@ -16,6 +16,8 @@ import {
   PASSWORD_MIN_LENGTH,
   PRONOUNS_MAX_LENGTH,
   STATUS_TEXT_MAX_LENGTH,
+  TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
+  TEXT_CHANNEL_NAME_MAX_LENGTH,
   type LiveKitTokenResponse,
   type PublicConfig,
   type RoomSummary,
@@ -30,6 +32,14 @@ import {
   setSessionCookie,
 } from './session.js';
 import { createUser, getUserById, getUserByUsername, updateUserProfile, verifyPassword, type UserRecord } from './users.js';
+import {
+  createTextChannel,
+  createTextMessage,
+  getTextChannelById,
+  getTextChannelByName,
+  listTextChannels,
+  listTextMessages,
+} from './textChannels.js';
 
 const app = express();
 const roomService = new RoomServiceClient(
@@ -56,6 +66,22 @@ const authLimiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { error: 'Muitas tentativas. Aguarde alguns minutos.' },
+});
+
+const textMessageLimiter = rateLimit({
+  windowMs: 10 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Você está enviando mensagens rápido demais.' },
+});
+
+const textChannelCreateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Limite de criação de canais atingido. Tente novamente mais tarde.' },
 });
 
 const usernameSchema = z
@@ -101,6 +127,20 @@ const tokenSchema = z.object({ roomId: z.string().min(1).max(32) });
 const musicCommandSchema = z.object({
   roomId: z.string().min(1).max(32),
   text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH).startsWith('/'),
+});
+
+const textChannelSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(TEXT_CHANNEL_NAME_MAX_LENGTH)
+    .regex(/^[\p{L}\p{N} _-]+$/u),
+  description: z.string().trim().max(TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH).default(''),
+});
+
+const textMessageSchema = z.object({
+  text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH),
 });
 
 function requireSession(request: Request, response: Response, next: NextFunction): void {
@@ -241,6 +281,65 @@ app.get('/api/config', requireSession, (_request, response) => {
   };
   response.json(payload);
 });
+
+app.get('/api/text-channels', requireSession, (_request, response) => {
+  response.json({ channels: listTextChannels() });
+});
+
+app.post('/api/text-channels', requireSession, textChannelCreateLimiter, (request, response) => {
+  const body = textChannelSchema.safeParse(request.body);
+  if (!body.success) {
+    response.status(400).json({ error: 'Informe um nome de canal válido.' });
+    return;
+  }
+
+  const name = body.data.name.replace(/\s+/g, ' ');
+  if (getTextChannelByName(name)) {
+    response.status(409).json({ error: 'Já existe um canal com esse nome.' });
+    return;
+  }
+  if (listTextChannels().length >= 50) {
+    response.status(409).json({ error: 'O servidor atingiu o limite de 50 canais de texto.' });
+    return;
+  }
+
+  const channel = createTextChannel(
+    name,
+    body.data.description || `Canal #${name}`,
+    currentUser(response).id,
+  );
+  response.status(201).json({ channel });
+});
+
+app.get('/api/text-channels/:channelId/messages', requireSession, (request, response) => {
+  const channelId = request.params.channelId;
+  if (typeof channelId !== 'string' || !getTextChannelById(channelId)) {
+    response.status(404).json({ error: 'Canal de texto não encontrado.' });
+    return;
+  }
+  response.json({ messages: listTextMessages(channelId) });
+});
+
+app.post(
+  '/api/text-channels/:channelId/messages',
+  requireSession,
+  textMessageLimiter,
+  (request, response) => {
+    const channelId = request.params.channelId;
+    const body = textMessageSchema.safeParse(request.body);
+    if (typeof channelId !== 'string' || !getTextChannelById(channelId)) {
+      response.status(404).json({ error: 'Canal de texto não encontrado.' });
+      return;
+    }
+    if (!body.success) {
+      response.status(400).json({ error: 'A mensagem deve ter entre 1 e 500 caracteres.' });
+      return;
+    }
+
+    const message = createTextMessage(channelId, body.data.text, currentUser(response));
+    response.status(201).json({ message });
+  },
+);
 
 app.get('/api/rooms', requireSession, async (_request, response, next) => {
   try {

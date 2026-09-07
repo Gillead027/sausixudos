@@ -1,6 +1,6 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { ACCENT_COLORS, type AccentColor, type PublicConfig, type RoomSummary, type UserSession, type VoiceChannel } from '@sausixudos/shared';
+import { ACCENT_COLORS, type AccentColor, type PublicConfig, type RoomSummary, type TextChannel, type UserSession, type VoiceChannel } from '@sausixudos/shared';
 import {
   ConnectionState,
   LocalParticipant,
@@ -53,6 +53,7 @@ import {
 } from './Icons';
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
+import { CreateTextChannelDialog, TextChannelView } from './TextChannels';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 const MESSAGE_STYLE_KEY = 'gc:message-style';
@@ -536,6 +537,7 @@ function CameraPreview({ deviceId }: { deviceId: string }) {
 function SettingsModal({
   open,
   onClose,
+  returnFocusRef,
   session,
   quality,
   setQuality,
@@ -591,6 +593,7 @@ function SettingsModal({
 }: {
   open: boolean;
   onClose: () => void;
+  returnFocusRef: RefObject<HTMLButtonElement | null>;
   session: UserSession;
   quality: ShareQuality;
   setQuality: (quality: ShareQuality) => void;
@@ -650,6 +653,8 @@ function SettingsModal({
   const [bannerError, setBannerError] = useState('');
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const firstNavigationButtonRef = useRef<HTMLButtonElement>(null);
 
   async function handleAvatarFile(file: File | undefined) {
     if (!file) return;
@@ -692,23 +697,59 @@ function SettingsModal({
   }, [open, refreshDevices]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !mounted) return;
+    firstNavigationButtonRef.current?.focus();
+    const overlay = modalRef.current?.parentElement;
+    const backgroundSiblings = Array.from(overlay?.parentElement?.children ?? [])
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && element !== overlay)
+      .map((element) => ({ element, ariaHidden: element.getAttribute('aria-hidden') }));
+    for (const { element } of backgroundSiblings) {
+      element.setAttribute('inert', '');
+      element.setAttribute('aria-hidden', 'true');
+    }
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(
+        modalRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
     };
     window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener('keydown', handleEscape);
+      for (const { element, ariaHidden } of backgroundSiblings) {
+        element.removeAttribute('inert');
+        if (ariaHidden === null) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', ariaHidden);
+      }
+      window.requestAnimationFrame(() => returnFocusRef.current?.focus());
+    };
+  }, [mounted, open, onClose, returnFocusRef]);
 
   if (!mounted) return null;
 
   return (
     <div className={`settings-overlay ${open ? 'entering' : 'leaving'}`} role="dialog" aria-modal="true" aria-label="Configurações">
-      <div className="settings-modal">
+      <div className="settings-modal" ref={modalRef}>
         <nav className="settings-nav">
           <span className="settings-nav-title">Configurações</span>
           <span className="settings-nav-group">Conta</span>
-          <button type="button" className={section === 'profile' ? 'active' : ''} onClick={() => setSection('profile')}>
+          <button ref={firstNavigationButtonRef} type="button" className={section === 'profile' ? 'active' : ''} onClick={() => setSection('profile')}>
             <UserIcon size={15} /> Meu perfil
           </button>
           <span className="settings-nav-group">Preferências</span>
@@ -1168,6 +1209,9 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [chatText, setChatText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [textChannels, setTextChannels] = useState<TextChannel[]>([]);
+  const [selectedTextChannelId, setSelectedTextChannelId] = useState<string | null>(null);
+  const [createTextChannelOpen, setCreateTextChannelOpen] = useState(false);
   const [perfMode, setPerfModeState] = useState<PerfMode>(() => getPerfMode());
   const [messageStyle, setMessageStyleState] = useState<MessageStyle>(() => loadMessageStyle());
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => getTheme());
@@ -1185,6 +1229,12 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [profileBanner, setProfileBanner] = useState(session.bannerUrl);
   const [savingProfile, setSavingProfile] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const createTextChannelButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const textChannelsInitializedRef = useRef(false);
+
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeCreateTextChannel = useCallback(() => setCreateTextChannelOpen(false), []);
 
   function choosePerfMode(mode: PerfMode) {
     setPerfMode(mode);
@@ -1277,6 +1327,33 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void api.getTextChannels().then(({ channels }) => {
+        if (!active) return;
+        setTextChannels(channels);
+        if (!textChannelsInitializedRef.current) {
+          textChannelsInitializedRef.current = true;
+          setSelectedTextChannelId(channels[0]?.id ?? null);
+        } else {
+          setSelectedTextChannelId((current) => {
+            if (current && !channels.some(({ id }) => id === current)) return channels[0]?.id ?? null;
+            return current;
+          });
+        }
+      }).catch(() => {
+        // Mantém a última lista disponível e tenta novamente no próximo intervalo.
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 10_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [voice.messages]);
 
@@ -1308,6 +1385,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   }
 
   async function joinChannel(channel: VoiceChannel) {
+    setSelectedTextChannelId(null);
     const startViewTransition = (document as ViewTransitionDocument).startViewTransition?.bind(document);
     if (perfMode === 'full' && startViewTransition) {
       startViewTransition(() => flushSync(() => setJoiningId(channel.id)));
@@ -1316,6 +1394,11 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     }
     await voice.connect(channel);
     setJoiningId(null);
+  }
+
+  function handleTextChannelCreated(channel: TextChannel) {
+    setTextChannels((current) => current.some(({ id }) => id === channel.id) ? current : [...current, channel]);
+    setSelectedTextChannelId(channel.id);
   }
 
   async function submitChat(event: FormEvent<HTMLFormElement>) {
@@ -1354,12 +1437,14 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   }
 
   const typedParticipants = voice.participants as (LocalParticipant | RemoteParticipant)[];
+  const activeTextChannel = textChannels.find(({ id }) => id === selectedTextChannelId);
 
   return (
     <main className="workspace">
       <SettingsModal
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={closeSettings}
+        returnFocusRef={settingsButtonRef}
         session={session}
         quality={quality}
         setQuality={setQuality}
@@ -1413,6 +1498,12 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         pttKey={voice.pttKey}
         setPttKeyBinding={voice.setPttKeyBinding}
       />
+      <CreateTextChannelDialog
+        open={createTextChannelOpen}
+        onClose={closeCreateTextChannel}
+        onCreated={handleTextChannelCreated}
+        returnFocusRef={createTextChannelButtonRef}
+      />
       <aside className="server-rail" aria-label="Servidores">
         <button className="server-button home active" type="button" title="Sausixudos" aria-label="Sausixudos">S</button>
         <span className="rail-divider" />
@@ -1427,7 +1518,38 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           <ChevronIcon size={16} />
         </header>
 
-        <nav className="channels" aria-label="Canais de voz">
+        <nav className="channels" aria-label="Canais do servidor">
+          <div className="section-title">
+            <span>CANAIS DE TEXTO</span>
+            <button
+              ref={createTextChannelButtonRef}
+              type="button"
+              className="add-channel-button"
+              onClick={() => setCreateTextChannelOpen(true)}
+              aria-label="Criar canal de texto"
+              title="Criar canal de texto"
+            >
+              <PlusIcon size={14} />
+            </button>
+          </div>
+          <div className="text-channel-list">
+            {textChannels.map((channel) => {
+              const selected = channel.id === selectedTextChannelId;
+              return (
+                <button
+                  key={channel.id}
+                  type="button"
+                  className={`text-channel-button ${selected ? 'active' : ''}`}
+                  onClick={() => setSelectedTextChannelId(channel.id)}
+                  aria-current={selected ? 'page' : undefined}
+                  title={channel.description}
+                >
+                  <span className="channel-hash" aria-hidden="true">#</span>
+                  <span>{channel.name}</span>
+                </button>
+              );
+            })}
+          </div>
           <div className="section-title">
             <span>CANAIS DE VOZ</span>
             <small>{rooms.reduce((sum, room) => sum + room.participants.length, 0)} online</small>
@@ -1530,6 +1652,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
               label="Escolher saída de áudio"
             />
             <button
+              ref={settingsButtonRef}
               className={`icon-button ${settingsOpen ? 'selected' : ''}`}
               type="button"
               onClick={() => setSettingsOpen(true)}
@@ -1545,28 +1668,34 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
       <section className="main-panel">
         <header className="room-header">
           <div className="room-title">
-            <VoiceIcon size={18} />
+            {activeTextChannel ? <span className="room-title-hash" aria-hidden="true">#</span> : <VoiceIcon size={18} />}
             <div>
-              <h1>{voice.currentChannel?.name || 'Nenhum canal selecionado'}</h1>
-              <p>{voice.currentChannel?.description || 'Escolha um canal na lista à esquerda.'}</p>
+              <h1>{activeTextChannel?.name || voice.currentChannel?.name || 'Nenhum canal selecionado'}</h1>
+              <p>{activeTextChannel?.description || voice.currentChannel?.description || 'Escolha um canal na lista à esquerda.'}</p>
             </div>
           </div>
-          <div className="room-header-actions">
-            <div className={`connection-state ${voice.connected ? 'online' : ''}`}><span />{connectionLabel}</div>
-            {voice.connected && (
-              <button
-                type="button"
-                className={`icon-button ${chatOpen ? 'selected' : ''}`}
-                onClick={() => setChatOpen((open) => !open)}
-                title={chatOpen ? 'Fechar chat' : 'Abrir chat'}
-                aria-label={chatOpen ? 'Fechar chat' : 'Abrir chat'}
-              >
-                <MessageIcon size={17} />
-              </button>
-            )}
-          </div>
+          {!activeTextChannel && (
+            <div className="room-header-actions">
+              <div className={`connection-state ${voice.connected ? 'online' : ''}`}><span />{connectionLabel}</div>
+              {voice.connected && (
+                <button
+                  type="button"
+                  className={`icon-button ${chatOpen ? 'selected' : ''}`}
+                  onClick={() => setChatOpen((open) => !open)}
+                  title={chatOpen ? 'Fechar chat' : 'Abrir chat'}
+                  aria-label={chatOpen ? 'Fechar chat' : 'Abrir chat'}
+                >
+                  <MessageIcon size={17} />
+                </button>
+              )}
+            </div>
+          )}
         </header>
 
+        {activeTextChannel ? (
+          <TextChannelView channel={activeTextChannel} session={session} messageStyle={messageStyle} />
+        ) : (
+        <>
         {voice.error && (
           <div className="error-banner" role="alert">
             <span><strong>Erro:</strong> {voice.error}</span>
@@ -1726,6 +1855,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
             </aside>
           )}
         </div>
+        </>
+        )}
       </section>
     </main>
   );

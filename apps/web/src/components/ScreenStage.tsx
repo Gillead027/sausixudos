@@ -62,16 +62,47 @@ export function ScreenStage({
   setStreamVolume: (identity: string, value: number) => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState('');
+
+  useEffect(() => {
+    const handleFullscreenChange = () => setFullscreen(document.fullscreenElement === stageRef.current);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  async function toggleFullscreen() {
+    const stage = stageRef.current;
+    if (!stage) return;
+    setFullscreenError('');
+    try {
+      if (document.fullscreenElement === stage) {
+        await document.exitFullscreen();
+      } else {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        await stage.requestFullscreen();
+      }
+    } catch {
+      setFullscreenError('Não foi possível ativar a tela cheia. Tente novamente.');
+    }
+  }
 
   return (
     <div className={`screen-stage screens-${Math.min(screens.length, 4)}`} ref={stageRef}>
       <div className="stream-toolbar">
         <span>{screens.length === 1 ? '1 transmissão' : `${screens.length} transmissões`}</span>
-        <button type="button" onClick={() => void stageRef.current?.requestFullscreen()}>
+        <button
+          type="button"
+          onClick={() => void toggleFullscreen()}
+          aria-pressed={fullscreen}
+          aria-label={fullscreen ? 'Sair da tela cheia' : 'Abrir transmissão em tela cheia'}
+          title={fullscreen ? 'Sair da tela cheia (Esc)' : 'Tela cheia'}
+        >
           <FullscreenIcon />
-          Tela cheia
+          {fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
         </button>
       </div>
+      {fullscreenError && <div className="fullscreen-error" role="alert">{fullscreenError}</div>}
       <div className="screen-grid">
         {screens.map((screen) => (
           <VideoTile

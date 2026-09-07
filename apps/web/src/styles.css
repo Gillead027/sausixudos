@@ -187,8 +187,9 @@ body { overflow: hidden; color: var(--text-primary); background: var(--app); fon
 button, input, select { margin: 0; font: inherit; }
 button { appearance: none; border: 0; color: inherit; background: transparent; }
 input, select { appearance: none; color: inherit; }
-button:focus-visible, input:focus-visible, select:focus-visible { outline: 1px solid #8ea397; outline-offset: 1px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #8ea397; outline-offset: 2px; }
 button:disabled { cursor: default; opacity: .45; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 6px; background: #363b40; background-clip: padding-box; }
@@ -273,6 +274,15 @@ button:disabled { cursor: default; opacity: .45; }
 .channels { min-height: 0; flex: 1; overflow-y: auto; padding: 13px 7px; }
 .section-title { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 8px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .45px; }
 .section-title small { color: var(--text-muted); font-size: 10px; font-weight: 500; letter-spacing: 0; }
+.section-title:not(:first-child) { margin-top: 15px; }
+.add-channel-button { width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer; }
+.add-channel-button:hover { color: var(--text-primary); background: var(--hover); }
+.text-channel-list { display: flex; flex-direction: column; gap: 2px; }
+.text-channel-button { width: 100%; height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer; text-align: left; }
+.text-channel-button:hover { color: var(--text-primary); background: var(--hover); }
+.text-channel-button.active { color: var(--text-primary); background: var(--selected); }
+.text-channel-button > span:last-child { overflow: hidden; font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.channel-hash, .room-title-hash { color: var(--text-muted); font-size: 19px; font-weight: 500; line-height: 1; }
 .service-warning { margin: 0 4px 9px; padding: 7px 8px; border: 1px solid #644044; border-radius: 2px; color: #d8a1a4; background: #26191b; font-size: 11px; }
 .channel-block { margin-bottom: 2px; }
 .channel-row { position: relative; }
@@ -416,6 +426,8 @@ button:disabled { cursor: default; opacity: .45; }
 .stream-skeleton span:nth-child(2) { width: 76%; }
 .stream-skeleton span:nth-child(3) { width: 48%; }
 .screen-stage:fullscreen { border: 0; }
+.screen-stage:fullscreen .screen-grid { height: calc(100vh - 36px); }
+.fullscreen-error { flex: 0 0 auto; padding: 7px 10px; color: #f0b6b8; background: #361d20; font-size: 11px; text-align: center; }
 
 /* Controles de voz */
 .voice-toolbar { height: 54px; flex: 0 0 54px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; border-top: 1px solid var(--border); background: #0f1113; }
@@ -458,6 +470,46 @@ button:disabled { cursor: default; opacity: .45; }
 .chat-form button { height: 34px; padding: 0 10px; border: 1px solid #5c8068; border-radius: 4px; color: #eef3ef; background: var(--accent); cursor: pointer; font-size: 11px; transition: background-color 100ms, color 100ms; }
 .chat-form button:hover:not(:disabled) { background: var(--accent-hover); }
 .chat-form button:disabled { border-color: var(--border-light); color: var(--text-muted); background: #222529; }
+
+/* Canais de texto persistentes */
+.text-channel-view { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; background: var(--main); }
+.text-channel-messages { padding: 20px 18px 8px; }
+.text-channel-welcome { min-height: 100%; display: flex; flex-direction: column; justify-content: flex-end; padding: 28px 4px; }
+.text-channel-welcome > span { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%; color: var(--text-primary); background: var(--panel-raised); font-size: 30px; }
+.text-channel-welcome h2 { margin: 14px 0 4px; color: var(--text-primary); font-size: 22px; }
+.text-channel-welcome p { margin: 0; color: var(--text-muted); font-size: 12px; }
+.text-message { grid-template-columns: 36px minmax(0, 1fr); }
+.text-message-avatar { width: 36px; height: 36px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; color: #eef2ef; background: var(--accent); font-size: 13px; font-weight: 700; }
+.text-message-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.text-channel-messages.compact .text-message { grid-template-columns: 24px minmax(0, 1fr); }
+.text-channel-messages.compact .text-message-avatar { width: 24px; height: 24px; font-size: 10px; }
+.messages.grouped .text-message.continued .text-message-avatar { visibility: hidden; height: 0; overflow: hidden; }
+.text-channel-form { flex: 0 0 auto; margin: 0 16px 16px; border-radius: var(--radius-md); background: var(--panel-raised); }
+.text-channel-form textarea { width: 100%; min-height: 44px; max-height: 160px; display: block; padding: 12px 14px 6px; border: 0; outline: 0; resize: vertical; color: var(--text-primary); background: transparent; font: inherit; line-height: 1.4; }
+.text-channel-form textarea::placeholder { color: var(--text-muted); }
+.text-channel-form-meta { min-height: 34px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 0 8px 7px 14px; }
+.text-channel-form-meta span { color: var(--text-secondary); font-size: 10px; }
+.text-channel-form-meta button { height: 28px; padding: 0 12px; border-radius: var(--radius-sm); color: #f5f7f5; background: var(--accent); cursor: pointer; font-size: 11px; font-weight: 600; }
+.text-channel-form-meta button:hover:not(:disabled) { background: var(--accent-hover); }
+
+/* Diálogo de criação de canal */
+.dialog-overlay { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(0, 0, 0, .68); animation: fade-in 160ms ease-out; }
+.channel-dialog { width: min(460px, 100%); padding: 22px; border: 1px solid var(--border-light); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-modal); animation: pop-in 220ms cubic-bezier(.34, 1.56, .64, 1); }
+.channel-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.channel-dialog h2 { margin: 0; color: var(--text-primary); font-size: 18px; }
+.channel-dialog header p { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; }
+.channel-dialog header > button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer; }
+.channel-dialog header > button:hover { color: var(--text-primary); background: var(--hover); }
+.channel-dialog > label { display: flex; justify-content: space-between; margin: 14px 0 7px; color: var(--text-secondary); font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+.channel-dialog > label span { color: var(--text-muted); font-weight: 500; text-transform: none; }
+.channel-dialog > input, .channel-name-field { width: 100%; height: 40px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-primary); background: #17191c; }
+.channel-dialog > input { padding: 0 11px; }
+.channel-name-field { display: flex; align-items: center; padding: 0 11px; }
+.channel-name-field span { color: var(--text-muted); font-size: 18px; }
+.channel-name-field input { min-width: 0; flex: 1; height: 100%; padding: 0 7px; border: 0; outline: 0; color: var(--text-primary); background: transparent; }
+.channel-dialog footer { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin: 22px -22px -22px; padding: 14px 22px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); background: var(--sidebar-footer); }
+.dialog-cancel { height: 34px; padding: 0 10px; color: var(--text-secondary); cursor: pointer; }
+.dialog-cancel:hover { color: var(--text-primary); text-decoration: underline; }
 
 /* Configurações */
 .settings-overlay { position: fixed; inset: 0; z-index: 100; display: flex; background: rgba(0, 0, 0, .6); }

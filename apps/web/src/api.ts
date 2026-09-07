@@ -3,6 +3,8 @@ import type {
   LiveKitTokenResponse,
   PublicConfig,
   RoomSummary,
+  TextChannel,
+  TextMessage,
   UserSession,
 } from '@sausixudos/shared';
 
@@ -63,6 +65,19 @@ export const api = {
   getConfig: () => request<PublicConfig>('/api/config'),
   getRooms: () =>
     request<{ rooms: RoomSummary[]; livekitAvailable: boolean }>('/api/rooms'),
+  getTextChannels: () => request<{ channels: TextChannel[] }>('/api/text-channels'),
+  createTextChannel: (name: string, description: string) =>
+    request<{ channel: TextChannel }>('/api/text-channels', {
+      method: 'POST',
+      body: JSON.stringify({ name, description }),
+    }),
+  getTextMessages: (channelId: string) =>
+    request<{ messages: TextMessage[] }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages`),
+  sendTextMessage: (channelId: string, text: string) =>
+    request<{ message: TextMessage }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
   getLiveKitToken: (roomId: string) =>
     request<LiveKitTokenResponse>('/api/livekit/token', {
       method: 'POST',
