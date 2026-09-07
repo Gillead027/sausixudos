@@ -374,6 +374,7 @@ function ParticipantRow({
   const avatarUrl = useRemoteAvatar(participant, ownAvatarUrl);
   const microphone = participant.getTrackPublication(Track.Source.Microphone);
   const muted = !microphone || microphone.isMuted;
+  const isSharingScreen = Boolean(participant.getTrackPublication(Track.Source.ScreenShare));
   const audioPublications = participant.audioTrackPublications as Map<string, TrackPublication>;
   const trackVersion = Array.from(audioPublications.values())
     .map((publication) => `${publication.trackSid}:${publication.isMuted}:${Boolean(publication.track)}`)
@@ -384,7 +385,10 @@ function ParticipantRow({
       <div className="participant-main">
         <Avatar name={name} accentColor={accentColor} avatarUrl={avatarUrl} speaking={speaking} compact />
         <div className="participant-copy">
-          <strong>{name}{local ? ' (você)' : ''}</strong>
+          <strong>
+            {name}{local ? ' (você)' : ''}
+            {isSharingScreen && <span className="live-badge" title="Compartilhando a tela">AO VIVO</span>}
+          </strong>
           <span>{speaking ? 'Falando' : muted ? 'Microfone desligado' : 'Conectado'}</span>
         </div>
         {muted && <MicOffIcon className="participant-muted" size={14} />}
@@ -1246,6 +1250,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [quality, setQuality] = useState<ShareQuality>('720p60');
   const [volumes, setVolumes] = useState<Record<string, number>>({});
   const [streamVolumes, setStreamVolumes] = useState<Record<string, number>>({});
+  const [watchingScreenIds, setWatchingScreenIds] = useState<Set<string>>(new Set());
   const [chatText, setChatText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -1759,6 +1764,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                     screens={voice.screenTracks}
                     streamVolumes={streamVolumes}
                     setStreamVolume={(identity, value) => setStreamVolumes((current) => ({ ...current, [identity]: value }))}
+                    watchingIds={watchingScreenIds}
+                    onWatch={(id) => setWatchingScreenIds((current) => new Set(current).add(id))}
                   />
                 ) : (
                   <div className="voice-idle-stage">
