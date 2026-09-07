@@ -8,9 +8,35 @@ import {
   session,
   type DesktopCapturerSource,
 } from 'electron';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { initAutoUpdater } from './updater.js';
+
+const debugLogPath = path.join(process.env.TEMP || process.env.TMP || '.', 'sausixudos-startup-debug.log');
+
+function debugLog(line: string): void {
+  try {
+    appendFileSync(debugLogPath, `[${new Date().toISOString()}] ${line}\n`, 'utf8');
+  } catch (error) {
+    try {
+      appendFileSync(
+        path.join('.', 'sausixudos-startup-debug-fallback.log'),
+        `[${new Date().toISOString()}] ${line} (primary log failed: ${String(error)})\n`,
+        'utf8',
+      );
+    } catch {
+      // diagnóstico best-effort, não pode travar o boot
+    }
+  }
+}
+
+process.on('uncaughtException', (error) => {
+  debugLog(`uncaughtException: ${error.stack || error.message}`);
+});
+process.on('unhandledRejection', (reason) => {
+  debugLog(`unhandledRejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+});
+debugLog('main.ts module start');
 
 interface DesktopConfig {
   appUrl: string;
@@ -47,11 +73,17 @@ let preArmedCapture: ArmedCapture | null = null;
 // (@sausixudos/desktop), e usa isso pra montar o caminho de userData —
 // resultando numa pasta "@sausixudos\desktop" em vez de "Sausixudos".
 app.setName('Sausixudos');
+debugLog('after setName');
 
 app.enableSandbox();
+debugLog('after enableSandbox');
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) app.quit();
+debugLog(`hasSingleInstanceLock=${hasSingleInstanceLock}`);
+if (!hasSingleInstanceLock) {
+  debugLog('quitting: no single instance lock');
+  app.quit();
+}
 
 function readConfiguredUrl(): URL {
   const developmentUrl = process.env.SAUSIXUDOS_APP_URL;
@@ -329,19 +361,34 @@ if (hasSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
-    const appUrl = readConfiguredUrl();
-    if (app.isPackaged && appUrl.protocol !== 'https:') {
-      throw new Error('O cliente de produção exige uma URL HTTPS.');
+    debugLog('whenReady resolved');
+    try {
+      const appUrl = readConfiguredUrl();
+      debugLog(`appUrl=${appUrl.toString()} isPackaged=${app.isPackaged}`);
+      if (app.isPackaged && appUrl.protocol !== 'https:') {
+        throw new Error('O cliente de produção exige uma URL HTTPS.');
+      }
+      Menu.setApplicationMenu(null);
+      installPickerIpc();
+      debugLog('installPickerIpc done');
+      installSessionSecurity(appUrl);
+      debugLog('installSessionSecurity done');
+      mainWindow = createMainWindow(appUrl);
+      debugLog('createMainWindow done');
+      mainWindow.once('closed', () => {
+        mainWindow = null;
+      });
+      initAutoUpdater();
+      debugLog('initAutoUpdater done');
+    } catch (error) {
+      debugLog(`whenReady handler threw: ${error instanceof Error ? error.stack || error.message : String(error)}`);
     }
-    Menu.setApplicationMenu(null);
-    installPickerIpc();
-    installSessionSecurity(appUrl);
-    mainWindow = createMainWindow(appUrl);
-    mainWindow.once('closed', () => {
-      mainWindow = null;
-    });
-    initAutoUpdater();
+  }).catch((error) => {
+    debugLog(`whenReady promise rejected: ${error instanceof Error ? error.stack || error.message : String(error)}`);
   });
 }
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  debugLog('window-all-closed -> quit');
+  app.quit();
+});
