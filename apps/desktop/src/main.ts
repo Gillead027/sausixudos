@@ -25,6 +25,11 @@ interface PendingCapture {
 let mainWindow: BrowserWindow | null = null;
 let pendingCapture: PendingCapture | null = null;
 
+// Sem isso, o Electron deriva o nome do app do "name" do package.json
+// (@sausixudos/desktop), e usa isso pra montar o caminho de userData —
+// resultando numa pasta "@sausixudos\desktop" em vez de "Sausixudos".
+app.setName('Sausixudos');
+
 app.enableSandbox();
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
