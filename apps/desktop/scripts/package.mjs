@@ -26,8 +26,24 @@ async function resolveAppUrl() {
 }
 
 const appUrl = new URL(await resolveAppUrl());
-if (appUrl.protocol !== 'https:' || appUrl.pathname !== '/' || appUrl.search || appUrl.hash) {
-  throw new Error('A URL de produção deve usar HTTPS e conter somente a origem, sem caminho ou parâmetros.');
+const normalizedHostname = appUrl.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+const isLoopbackHostname =
+  normalizedHostname === 'localhost' ||
+  normalizedHostname.endsWith('.localhost') ||
+  normalizedHostname === '::1' ||
+  normalizedHostname === '0.0.0.0' ||
+  /^127(?:\.\d{1,3}){3}$/.test(normalizedHostname);
+
+if (
+  appUrl.protocol !== 'https:' ||
+  appUrl.pathname !== '/' ||
+  appUrl.search ||
+  appUrl.hash ||
+  isLoopbackHostname
+) {
+  throw new Error(
+    'A URL de produção deve usar HTTPS, conter somente a origem e não pode apontar para localhost.',
+  );
 }
 
 const npmCli = process.env.npm_execpath;
