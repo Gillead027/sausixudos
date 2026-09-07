@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Selecionar compartilhamento</title>
+    <link rel="stylesheet" href="picker.css" />
+  </head>
+  <body>
+    <header>
+      <div class="picker-icon" aria-hidden="true">🖥</div>
+      <div>
+        <h1>Compartilhar tela</h1>
+        <p>Escolha o que você quer transmitir para seus amigos.</p>
+      </div>
+    </header>
+    <div id="tabs" class="tabs">
+      <button type="button" class="tab active" data-kind="window">Aplicativos</button>
+      <button type="button" class="tab" data-kind="screen">Telas</button>
+    </div>
+    <main id="source-list">
+      <p id="status">Carregando fontes…</p>
+    </main>
+    <footer>
+      <button id="cancel" type="button" class="btn-secondary">Cancelar</button>
+      <button id="confirm" type="button" class="btn-primary" disabled>Transmitir</button>
+    </footer>
+    <script src="../renderer-dist/picker-renderer.global.js"></script>
+  </body>
+</html>

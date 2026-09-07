@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+renderer-dist/
+.env
+*.log
+*.tsbuildinfo
+.DS_Store
+.vite/
+coverage/
+apps/api/data/
+.claude/

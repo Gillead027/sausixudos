@@ -1,0 +1,16 @@
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+log_level: info
+
+# Sinalização HTTP/WebSocket permanece apenas na rede interna Docker em 7880.
+# A mídia é publicada diretamente pela VPS em UDP 7882, com fallback TCP 7881.
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: true
+
+room:
+  auto_create: true
+  empty_timeout: 300
+  departure_timeout: 20

@@ -1,0 +1,92 @@
+name: sausixudos
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      livekit:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      WEB_ORIGIN: "https://${APP_DOMAIN:?Defina APP_DOMAIN no arquivo .env}"
+      COOKIE_SECURE: "true"
+      INVITE_TOKEN: "${INVITE_TOKEN:?Defina INVITE_TOKEN no arquivo .env}"
+      SESSION_SECRET: "${SESSION_SECRET:?Defina SESSION_SECRET no arquivo .env}"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:?Defina LIVEKIT_API_KEY no arquivo .env}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?Defina LIVEKIT_API_SECRET no arquivo .env}"
+      LIVEKIT_PUBLIC_URL: "wss://${APP_DOMAIN:?Defina APP_DOMAIN no arquivo .env}/livekit"
+      LIVEKIT_INTERNAL_URL: http://livekit:7880
+      DB_PATH: /app/data/gillecord.db
+      VOICE_CHANNELS: "${VOICE_CHANNELS:-geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida}"
+    volumes:
+      - api_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" ]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s
+  caddy:
+    image: caddy:2.10.2-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?Defina APP_DOMAIN no arquivo .env}"
+    ports:
+      - '0.0.0.0:80:80'
+      - '0.0.0.0:443:443'
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  livekit:
+    image: livekit/livekit-server:v1.13.5
+    volumes:
+      - ./infra/livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?Defina LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET:?Defina LIVEKIT_API_SECRET}"
+    ports:
+      - '0.0.0.0:7881:7881/tcp'
+      - '0.0.0.0:7882:7882/udp'
+    command: [ "--config", "/etc/livekit.yaml" ]
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -S -O /dev/null http://127.0.0.1:7880/ 2>&1 | grep -q 'HTTP/'" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1/" ]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  caddy_data:
+  caddy_config:
+  api_data:

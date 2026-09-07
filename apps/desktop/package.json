@@ -1,0 +1,68 @@
+{
+  "name": "@sausixudos/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cliente Windows do Sausixudos",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "npm run build && wait-on http-get://localhost:5173 http-get://localhost:3000/api/health && node scripts/dev.mjs",
+    "build": "tsup --config tsup.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package": "node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "cross-env": "^10.1.0",
+    "electron": "44.2.0",
+    "electron-builder": "^26.15.3",
+    "tsup": "8.5.0",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.sausixudos.desktop",
+    "productName": "Sausixudos",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/*.map",
+      "!dist/desktop-config.json",
+      "renderer-dist/**/*",
+      "src/picker.html",
+      "src/picker.css",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/desktop-config.json",
+        "to": "desktop-config.json"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sausixudos",
+      "artifactName": "Sausixudos-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "Sausixudos.${ext}"
+    }
+  }
+}

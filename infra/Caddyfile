@@ -1,0 +1,25 @@
+{$APP_DOMAIN} {
+  encode zstd gzip
+
+  @api path /api/*
+  handle @api {
+    reverse_proxy api:3000
+  }
+
+  # O SDK acrescenta /rtc ao caminho base. handle_path remove /livekit
+  # antes de encaminhar /rtc ao endpoint de sinalização do LiveKit.
+  handle_path /livekit/* {
+    reverse_proxy livekit:7880
+  }
+
+  handle {
+    reverse_proxy web:80
+  }
+
+  header {
+    -Server
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    Permissions-Policy "camera=(), microphone=(self), display-capture=(self)"
+  }
+}
