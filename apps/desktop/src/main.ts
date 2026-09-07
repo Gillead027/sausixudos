@@ -339,8 +339,12 @@ function createMainWindow(appUrl: URL): BrowserWindow {
       window.webContents.reloadIgnoringCache();
     }
   });
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => {
+    debugLog('ready-to-show fired, calling show()');
+    window.show();
+  });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    debugLog(`did-fail-load errorCode=${errorCode} description=${errorDescription}`);
     if (errorCode === -3) return;
     void dialog.showMessageBox(window, {
       type: 'error',
@@ -349,6 +353,26 @@ function createMainWindow(appUrl: URL): BrowserWindow {
       detail: `${appUrl.origin}\n${errorDescription}`,
     });
   });
+  window.webContents.on('did-finish-load', () => debugLog('did-finish-load'));
+  window.webContents.on('dom-ready', () => debugLog('dom-ready'));
+  window.webContents.on('render-process-gone', (_event, details) => debugLog(`render-process-gone: ${JSON.stringify(details)}`));
+  window.webContents.on('unresponsive', () => debugLog('webContents unresponsive'));
+  window.webContents.on('responsive', () => debugLog('webContents responsive again'));
+  window.on('show', () => debugLog('window show event'));
+  window.on('close', () => debugLog('window close event'));
+  window.on('closed', () => debugLog('window closed event'));
+  // ready-to-show normalmente dispara no primeiro paint; se por algum motivo
+  // não disparar (perda do evento, hang de carregamento sem did-fail-load),
+  // isso garante que a janela apareça de qualquer forma em vez de ficar
+  // rodando invisível pra sempre.
+  const forceShowTimer = setTimeout(() => {
+    if (!window.isDestroyed() && !window.isVisible()) {
+      debugLog('forcing show() after timeout — ready-to-show never fired');
+      window.show();
+    }
+  }, 8_000);
+  window.once('show', () => clearTimeout(forceShowTimer));
+  window.once('closed', () => clearTimeout(forceShowTimer));
   void window.loadURL(appUrl.toString());
   return window;
 }
@@ -392,3 +416,7 @@ app.on('window-all-closed', () => {
   debugLog('window-all-closed -> quit');
   app.quit();
 });
+app.on('before-quit', () => debugLog('before-quit'));
+app.on('will-quit', () => debugLog('will-quit'));
+app.on('quit', (_event, exitCode) => debugLog(`quit exitCode=${exitCode}`));
+app.on('child-process-gone', (_event, details) => debugLog(`child-process-gone: ${JSON.stringify(details)}`));
