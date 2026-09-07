@@ -193,18 +193,17 @@ export function useVoiceRoom() {
   }, [room, syncRoom]);
 
   const refreshDevices = useCallback(async () => {
-    try {
-      const [inputs, outputs, cameras] = await Promise.all([
-        Room.getLocalDevices('audioinput'),
-        Room.getLocalDevices('audiooutput'),
-        Room.getLocalDevices('videoinput'),
-      ]);
-      setAudioInputs(inputs);
-      setAudioOutputs(outputs);
-      setVideoInputs(cameras);
-    } catch {
-      // Enumeração de dispositivos pode falhar sem permissão de mídia ainda concedida.
-    }
+    const [inputs, outputs, cameras] = await Promise.allSettled([
+      Room.getLocalDevices('audioinput'),
+      Room.getLocalDevices('audiooutput'),
+      Room.getLocalDevices('videoinput'),
+    ]);
+    // Cada dispositivo é buscado de forma independente: se a câmera falhar
+    // (sem webcam, ou em uso por outro app), microfone e saída de áudio
+    // continuam sendo preenchidos normalmente.
+    if (inputs.status === 'fulfilled') setAudioInputs(inputs.value);
+    if (outputs.status === 'fulfilled') setAudioOutputs(outputs.value);
+    if (cameras.status === 'fulfilled') setVideoInputs(cameras.value);
   }, []);
 
   useEffect(() => {
@@ -258,6 +257,7 @@ export function useVoiceRoom() {
           if (inputModeRef.current === 'ptt') {
             await room.localParticipant.setMicrophoneEnabled(false);
           }
+          void refreshDevices();
         } catch (mediaError) {
           setError(`${describeMediaError(mediaError)} Você entrou com o microfone desligado.`);
         }
@@ -272,7 +272,7 @@ export function useVoiceRoom() {
         );
       }
     },
-    [currentChannel, room, syncRoom],
+    [currentChannel, room, syncRoom, refreshDevices],
   );
 
   const disconnect = useCallback(async () => {
@@ -447,6 +447,7 @@ export function useVoiceRoom() {
       setMicrophoneDevice,
       setSpeakerDevice,
       setCameraDevice,
+      refreshDevices,
       connect,
       disconnect,
       toggleMicrophone,
@@ -485,6 +486,7 @@ export function useVoiceRoom() {
       setMicrophoneDevice,
       setSpeakerDevice,
       setCameraDevice,
+      refreshDevices,
       connect,
       disconnect,
       toggleMicrophone,

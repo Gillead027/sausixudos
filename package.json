@@ -7,8 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @sausixudos/shared && npm run build -w @sausixudos/api && npm run build -w @sausixudos/web && npm run build -w @sausixudos/desktop",
-    "typecheck": "npm run build -w @sausixudos/shared && npm run typecheck -w @sausixudos/api && npm run typecheck -w @sausixudos/web && npm run typecheck -w @sausixudos/desktop",
+    "build": "npm run build -w @sausixudos/shared && npm run build -w @sausixudos/api && npm run build -w @sausixudos/web && npm run build -w @sausixudos/desktop && npm run build -w @sausixudos/music-bot",
+    "typecheck": "npm run build -w @sausixudos/shared && npm run typecheck -w @sausixudos/api && npm run typecheck -w @sausixudos/web && npm run typecheck -w @sausixudos/desktop && npm run typecheck -w @sausixudos/music-bot",
     "dev": "npm run build -w @sausixudos/shared && concurrently -n api,web -c blue,magenta \"npm run dev -w @sausixudos/api\" \"npm run dev -w @sausixudos/web\"",
     "desktop:dev": "npm run build -w @sausixudos/shared && concurrently -k -s first -n api,web,desktop -c blue,magenta,green \"cross-env NODE_ENV=development WEB_ORIGIN=http://localhost:5173 COOKIE_SECURE=false LIVEKIT_PUBLIC_URL=ws://localhost:5173/livekit LIVEKIT_INTERNAL_URL=http://localhost:7880 npm run dev -w @sausixudos/api\" \"npm run dev -w @sausixudos/web\" \"npm run dev -w @sausixudos/desktop\"",
     "desktop:build": "npm run package -w @sausixudos/desktop",

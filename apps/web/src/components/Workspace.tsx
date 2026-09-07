@@ -432,6 +432,7 @@ function SettingsModal({
   setMicrophoneDevice,
   setSpeakerDevice,
   setCameraDevice,
+  refreshDevices,
   inputMode,
   setInputMode,
   pttKey,
@@ -467,6 +468,7 @@ function SettingsModal({
   setMicrophoneDevice: (deviceId: string) => void;
   setSpeakerDevice: (deviceId: string) => void;
   setCameraDevice: (deviceId: string) => void;
+  refreshDevices: () => void;
   inputMode: InputMode;
   setInputMode: (mode: InputMode) => void;
   pttKey: string;
@@ -487,6 +489,10 @@ function SettingsModal({
 
   const [section, setSection] = useState<SettingsSection>('profile');
   const mounted = useDelayedUnmount(open, 200);
+
+  useEffect(() => {
+    if (open) refreshDevices();
+  }, [open, refreshDevices]);
 
   useEffect(() => {
     if (!open) return;
@@ -885,6 +891,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         setMicrophoneDevice={(deviceId) => void voice.setMicrophoneDevice(deviceId)}
         setSpeakerDevice={(deviceId) => void voice.setSpeakerDevice(deviceId)}
         setCameraDevice={(deviceId) => void voice.setCameraDevice(deviceId)}
+        refreshDevices={() => void voice.refreshDevices()}
         inputMode={voice.inputMode}
         setInputMode={voice.setInputMode}
         pttKey={voice.pttKey}
