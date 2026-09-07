@@ -20,6 +20,6 @@
     -Server
     X-Content-Type-Options nosniff
     Referrer-Policy no-referrer
-    Permissions-Policy "camera=(), microphone=(self), display-capture=(self)"
+    Permissions-Policy "camera=(self), microphone=(self), display-capture=(self)"
   }
 }
