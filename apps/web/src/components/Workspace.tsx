@@ -1292,10 +1292,17 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
 
   async function submitChat(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!chatText.trim()) return;
+    const text = chatText.trim();
+    if (!text) return;
     try {
       await voice.sendMessage(chatText);
       setChatText('');
+      // O bot de música só entra no canal quando alguém usa um comando —
+      // ele não recebe isso pelo canal de dados do LiveKit porque não
+      // está na sala ainda, então avisamos ele por fora (API -> bot).
+      if (text.startsWith('/') && voice.currentChannel) {
+        void api.sendMusicCommand(voice.currentChannel.id, text).catch(() => {});
+      }
     } catch {
       // O estado da conexão informa quando o envio está indisponível.
     }

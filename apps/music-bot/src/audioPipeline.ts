@@ -1,11 +1,25 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const COOKIES_FILE = process.env.YTDLP_COOKIES_FILE || '/app/cookies.txt';
+const COOKIES_MASTER = process.env.YTDLP_COOKIES_MASTER || '/app/cookies-master.txt';
 
+/**
+ * yt-dlp sempre tenta regravar o cookie jar ao terminar, e ao fazer isso
+ * descarta cookies marcados como "de sessão" — incluindo os de autenticação
+ * (SID/HSID/SAPISID/LOGIN_INFO), o que já deslogou a conta uma vez e voltou
+ * a ativar o bloqueio de bot do YouTube. Por isso o master fica só-leitura,
+ * e cada execução trabalha numa cópia descartável: o yt-dlp pode estragar a
+ * cópia à vontade que o arquivo de verdade nunca é tocado.
+ */
 function cookiesArgs(): string[] {
   try {
-    return existsSync(COOKIES_FILE) && statSync(COOKIES_FILE).size > 0 ? ['--cookies', COOKIES_FILE] : [];
+    if (!existsSync(COOKIES_MASTER) || statSync(COOKIES_MASTER).size === 0) return [];
+    const scratchFile = join(tmpdir(), `yt-cookies-${randomUUID()}.txt`);
+    copyFileSync(COOKIES_MASTER, scratchFile);
+    return ['--cookies', scratchFile];
   } catch {
     return [];
   }

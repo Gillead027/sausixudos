@@ -20,6 +20,7 @@ services:
       LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?Defina LIVEKIT_API_SECRET no arquivo .env}"
       LIVEKIT_PUBLIC_URL: "wss://${APP_DOMAIN:?Defina APP_DOMAIN no arquivo .env}/livekit"
       LIVEKIT_INTERNAL_URL: http://livekit:7880
+      MUSIC_BOT_INTERNAL_URL: http://music-bot:4100
       DB_PATH: /app/data/gillecord.db
       VOICE_CHANNELS: "${VOICE_CHANNELS:-geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida}"
     volumes:
@@ -69,9 +70,9 @@ services:
       LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:?Defina LIVEKIT_API_SECRET no arquivo .env}"
       LIVEKIT_INTERNAL_URL: http://livekit:7880
       VOICE_CHANNELS: "${VOICE_CHANNELS:-geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida}"
-      YTDLP_COOKIES_FILE: /app/cookies.txt
+      YTDLP_COOKIES_MASTER: /app/cookies-master.txt
     volumes:
-      - ./secrets/youtube-cookies.txt:/app/cookies.txt
+      - ./secrets/youtube-cookies.txt:/app/cookies-master.txt:ro
     restart: unless-stopped
 
   livekit:

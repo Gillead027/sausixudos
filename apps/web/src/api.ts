@@ -55,6 +55,11 @@ export const api = {
       body: JSON.stringify({ accentColor, statusText, bio, pronouns, avatarUrl, bannerUrl }),
     }),
   getUserAvatar: (userId: string) => request<{ avatarUrl: string }>(`/api/users/${userId}/avatar`),
+  sendMusicCommand: (roomId: string, text: string) =>
+    request<void>('/api/music/command', {
+      method: 'POST',
+      body: JSON.stringify({ roomId, text }),
+    }),
   getConfig: () => request<PublicConfig>('/api/config'),
   getRooms: () =>
     request<{ rooms: RoomSummary[]; livekitAvailable: boolean }>('/api/rooms'),

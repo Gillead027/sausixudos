@@ -7,6 +7,7 @@ const envSchema = z.object({
   LIVEKIT_API_KEY: z.string().min(1),
   LIVEKIT_API_SECRET: z.string().min(32),
   LIVEKIT_INTERNAL_URL: z.string().url().default('http://localhost:7880'),
+  MUSIC_BOT_PORT: z.coerce.number().int().positive().default(4100),
   VOICE_CHANNELS: z.string().default(
     'geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida',
   ),

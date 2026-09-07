@@ -18,6 +18,7 @@ const envSchema = z.object({
   LIVEKIT_API_SECRET: z.string().min(32, 'LIVEKIT_API_SECRET deve ter pelo menos 32 caracteres'),
   LIVEKIT_PUBLIC_URL: z.string().url(),
   LIVEKIT_INTERNAL_URL: z.string().url().default('http://localhost:7880'),
+  MUSIC_BOT_INTERNAL_URL: z.string().url().default('http://music-bot:4100'),
   DB_PATH: z.string().default('./data/gillecord.db'),
   VOICE_CHANNELS: z.string().default(
     'geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida',

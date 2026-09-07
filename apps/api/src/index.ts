@@ -9,6 +9,7 @@ import {
   AVATAR_DATA_URL_MAX_LENGTH,
   BANNER_DATA_URL_MAX_LENGTH,
   BIO_MAX_LENGTH,
+  CHAT_MESSAGE_MAX_LENGTH,
   DISPLAY_NAME_MAX_LENGTH,
   DISPLAY_NAME_MIN_LENGTH,
   PASSWORD_MAX_LENGTH,
@@ -96,6 +97,11 @@ const profileSchema = z.object({
 });
 
 const tokenSchema = z.object({ roomId: z.string().min(1).max(32) });
+
+const musicCommandSchema = z.object({
+  roomId: z.string().min(1).max(32),
+  text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH).startsWith('/'),
+});
 
 function requireSession(request: Request, response: Response, next: NextFunction): void {
   const identity = getSession(request);
@@ -301,6 +307,28 @@ app.post('/api/livekit/token', requireSession, async (request, response) => {
     url: config.LIVEKIT_PUBLIC_URL,
   };
   response.json(payload);
+});
+
+app.post('/api/music/command', requireSession, async (request, response) => {
+  const body = musicCommandSchema.safeParse(request.body);
+  const room = body.success ? config.channels.find((channel) => channel.id === body.data.roomId) : undefined;
+  if (!body.success || !room) {
+    response.status(400).json({ error: 'Canal inválido.' });
+    return;
+  }
+
+  const user = currentUser(response);
+  try {
+    await fetch(`${config.MUSIC_BOT_INTERNAL_URL}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channelId: room.id, text: body.data.text, requestedBy: user.username }),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (error) {
+    console.error('Falha ao repassar comando pro bot de música:', error);
+  }
+  response.status(204).end();
 });
 
 app.use((_request, response) => {

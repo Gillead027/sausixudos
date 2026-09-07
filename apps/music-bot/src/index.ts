@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import {
   AudioFrame,
   AudioSource,
   LocalAudioTrack,
   type LocalTrackPublication,
   Room,
-  RoomEvent,
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
@@ -17,6 +17,7 @@ import { CHANNELS, FRAME_SAMPLES, SAMPLE_RATE, startAudioPipeline, type AudioPip
 const BOT_IDENTITY = 'music-bot';
 const BOT_NAME = 'Music Bot';
 const CHAT_TOPIC = 'sausixudos-chat';
+const IDLE_DISCONNECT_MS = 60_000;
 
 interface QueueItem {
   url: string;
@@ -33,7 +34,36 @@ interface PlaybackState {
 
 const queue: QueueItem[] = [];
 const rooms = new Map<string, Room>();
+const idleTimers = new Map<string, NodeJS.Timeout>();
 let playback: PlaybackState | null = null;
+
+function cancelIdleDisconnect(channelId: string): void {
+  const timer = idleTimers.get(channelId);
+  if (timer) {
+    clearTimeout(timer);
+    idleTimers.delete(channelId);
+  }
+}
+
+function scheduleIdleDisconnect(channelId: string): void {
+  cancelIdleDisconnect(channelId);
+  idleTimers.set(
+    channelId,
+    setTimeout(() => {
+      idleTimers.delete(channelId);
+      void disconnectChannel(channelId);
+    }, IDLE_DISCONNECT_MS),
+  );
+}
+
+async function disconnectChannel(channelId: string): Promise<void> {
+  if (playback?.channelId === channelId) return; // tocando de novo nesse meio-tempo, não desconecta
+  const room = rooms.get(channelId);
+  if (!room) return;
+  rooms.delete(channelId);
+  await room.disconnect().catch(() => {});
+  console.log(`Bot de música saiu do canal "${channelId}" (ocioso).`);
+}
 
 async function mintToken(channelId: string): Promise<string> {
   const token = new AccessToken(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET, {
@@ -49,6 +79,23 @@ async function mintToken(channelId: string): Promise<string> {
     canPublishData: true,
   });
   return token.toJwt();
+}
+
+/** Conecta ao canal só quando alguém usa um comando nele — o bot não fica mais parado, mudo, em todo canal o tempo todo. */
+async function getOrCreateRoom(channelId: string): Promise<Room> {
+  const existing = rooms.get(channelId);
+  if (existing) return existing;
+
+  if (!config.channelIds.includes(channelId)) {
+    throw new Error(`Canal "${channelId}" não configurado.`);
+  }
+
+  const room = new Room();
+  const token = await mintToken(channelId);
+  await room.connect(config.LIVEKIT_INTERNAL_URL, token, { autoSubscribe: false, dynacast: false });
+  rooms.set(channelId, room);
+  console.log(`Bot de música entrou no canal "${channelId}".`);
+  return room;
 }
 
 async function reply(channelId: string, text: string): Promise<void> {
@@ -87,8 +134,10 @@ async function playNext(channelId: string): Promise<void> {
   const next = queue.shift();
   if (!next) {
     await stopPlayback();
+    scheduleIdleDisconnect(channelId);
     return;
   }
+  cancelIdleDisconnect(channelId);
 
   const room = rooms.get(channelId);
   if (!room?.localParticipant) return;
@@ -174,6 +223,7 @@ async function handleCommand(channelId: string, senderName: string, text: string
       if (playback?.channelId === channelId) {
         queue.length = 0;
         await stopPlayback();
+        scheduleIdleDisconnect(channelId);
         await reply(channelId, '⏹ Parado.');
       }
       return;
@@ -191,30 +241,44 @@ async function handleCommand(channelId: string, senderName: string, text: string
   }
 }
 
-async function connectToChannel(channelId: string): Promise<void> {
-  const room = new Room();
-  const token = await mintToken(channelId);
-  await room.connect(config.LIVEKIT_INTERNAL_URL, token, { autoSubscribe: false, dynacast: false });
-  rooms.set(channelId, room);
+interface CommandRequestBody {
+  channelId?: unknown;
+  text?: unknown;
+  requestedBy?: unknown;
+}
 
-  room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-    if (topic !== CHAT_TOPIC || !participant) return;
-    try {
-      const message = JSON.parse(new TextDecoder().decode(payload)) as ChatMessage;
-      if (typeof message.text !== 'string' || !message.text.startsWith('/')) return;
-      void handleCommand(channelId, message.senderName || participant.identity, message.text);
-    } catch {
-      // Ignora payloads que não são mensagens de chat válidas.
+function startCommandServer(): void {
+  const server = createServer((request, response) => {
+    if (request.method !== 'POST' || request.url !== '/command') {
+      response.writeHead(404).end();
+      return;
     }
+
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('end', () => {
+      void (async () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as CommandRequestBody;
+          const { channelId, text, requestedBy } = body;
+          if (typeof channelId !== 'string' || typeof text !== 'string' || typeof requestedBy !== 'string') {
+            response.writeHead(400).end();
+            return;
+          }
+          await getOrCreateRoom(channelId);
+          await handleCommand(channelId, requestedBy, text);
+          response.writeHead(204).end();
+        } catch (error) {
+          console.error('Falha ao processar comando recebido:', error);
+          response.writeHead(500).end();
+        }
+      })();
+    });
   });
 
-  console.log(`Bot de música conectado ao canal "${channelId}".`);
+  server.listen(config.MUSIC_BOT_PORT, () => {
+    console.log(`Bot de música aguardando comandos na porta ${config.MUSIC_BOT_PORT}.`);
+  });
 }
 
-async function main(): Promise<void> {
-  for (const channelId of config.channelIds) {
-    await connectToChannel(channelId);
-  }
-}
-
-void main();
+startCommandServer();
