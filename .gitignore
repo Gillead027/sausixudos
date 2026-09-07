@@ -10,3 +10,4 @@ renderer-dist/
 coverage/
 apps/api/data/
 .claude/
+secrets/

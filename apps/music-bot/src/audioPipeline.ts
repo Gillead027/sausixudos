@@ -1,4 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
+
+const COOKIES_FILE = process.env.YTDLP_COOKIES_FILE || '/app/cookies.txt';
+
+function cookiesArgs(): string[] {
+  try {
+    return existsSync(COOKIES_FILE) && statSync(COOKIES_FILE).size > 0 ? ['--cookies', COOKIES_FILE] : [];
+  } catch {
+    return [];
+  }
+}
 
 export const SAMPLE_RATE = 48000;
 export const CHANNELS = 2;
@@ -29,6 +40,7 @@ export function startAudioPipeline(
     '-o',
     '-',
     '--quiet',
+    ...cookiesArgs(),
     url,
   ]);
 
