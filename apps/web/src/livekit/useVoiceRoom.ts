@@ -17,6 +17,8 @@ import {
   type VoiceChannel,
 } from '@sausixudos/shared';
 import { api } from '../api';
+import { getOutputVolume } from '../appearancePrefs';
+import { playJoinSound, playLeaveSound, playMessageSound } from '../sounds';
 
 export type ShareQuality = '720p30' | '720p60' | '1080p60';
 export type InputMode = 'voice' | 'ptt';
@@ -103,6 +105,10 @@ export function useVoiceRoom() {
   const wasMicEnabled = useRef(true);
   const inputModeRef = useRef(inputMode);
   const pttKeyRef = useRef(pttKey);
+  // Suprime os sons de entrada/saída pra quem já estava no canal antes de
+  // você conectar — sem isso, entrar numa call cheia tocaria um bipe pra
+  // cada pessoa já presente, tudo de uma vez.
+  const suppressPresenceSoundsRef = useRef(true);
   inputModeRef.current = inputMode;
   pttKeyRef.current = pttKey;
 
@@ -160,6 +166,7 @@ export function useVoiceRoom() {
             sentAt: Date.now(),
           };
           setMessages((current) => [...current.slice(-99), message]);
+          playMessageSound(getOutputVolume());
         }
       } catch {
         // Ignora pacotes de dados que não pertencem ao chat.
@@ -170,10 +177,18 @@ export function useVoiceRoom() {
       if (isScreenShareCancelled(mediaError)) return;
       setError(describeMediaError(mediaError));
     };
+    const onParticipantConnected = () => {
+      syncRoom();
+      if (!suppressPresenceSoundsRef.current) playJoinSound(getOutputVolume());
+    };
+    const onParticipantDisconnected = () => {
+      syncRoom();
+      if (!suppressPresenceSoundsRef.current) playLeaveSound(getOutputVolume());
+    };
 
     room
-      .on(RoomEvent.ParticipantConnected, syncRoom)
-      .on(RoomEvent.ParticipantDisconnected, syncRoom)
+      .on(RoomEvent.ParticipantConnected, onParticipantConnected)
+      .on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected)
       .on(RoomEvent.TrackSubscribed, syncRoom)
       .on(RoomEvent.TrackUnsubscribed, syncRoom)
       .on(RoomEvent.TrackMuted, syncRoom)
@@ -250,7 +265,11 @@ export function useVoiceRoom() {
         setMessages([]);
         setDeafened(false);
         const credentials = await api.getLiveKitToken(channel.id);
+        suppressPresenceSoundsRef.current = true;
         await room.connect(credentials.url, credentials.token, { autoSubscribe: true });
+        setTimeout(() => {
+          suppressPresenceSoundsRef.current = false;
+        }, 1_500);
         setCurrentChannel(channel);
         try {
           await room.localParticipant.setMicrophoneEnabled(true);

@@ -19,11 +19,13 @@ import {
   CHAT_FONT_SCALES,
   getChatFontStep,
   getMessageSpacingStep,
+  getOutputVolume,
   getUiAccent,
   getUiZoomStep,
   MESSAGE_SPACING_SCALES,
   setChatFontStep,
   setMessageSpacingStep,
+  setOutputVolume,
   setUiAccent,
   setUiZoomStep,
   UI_ACCENT_SWATCHES,
@@ -54,17 +56,11 @@ import { ScreenStage } from './ScreenStage';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 const MESSAGE_STYLE_KEY = 'gc:message-style';
-const OUTPUT_VOLUME_KEY = 'gc:output-volume';
 const VALID_MESSAGE_STYLES: MessageStyle[] = ['default', 'compact', 'grouped'];
 
 function loadMessageStyle(): MessageStyle {
   const stored = localStorage.getItem(MESSAGE_STYLE_KEY);
   return VALID_MESSAGE_STYLES.includes(stored as MessageStyle) ? (stored as MessageStyle) : 'default';
-}
-
-function loadOutputVolume(): number {
-  const stored = Number(localStorage.getItem(OUTPUT_VOLUME_KEY));
-  return Number.isFinite(stored) && stored >= 0 && stored <= 100 ? stored : 100;
 }
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; swatch: string }[] = [
@@ -1180,7 +1176,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [messageSpacingStep, setMessageSpacingStepState] = useState(() => getMessageSpacingStep());
   const [uiZoomStep, setUiZoomStepState] = useState(() => getUiZoomStep());
   const [uiAccent, setUiAccentState] = useState(() => getUiAccent());
-  const [outputVolume, setOutputVolumeState] = useState(() => loadOutputVolume());
+  const [outputVolume, setOutputVolumeState] = useState(() => getOutputVolume());
   const [profileColor, setProfileColor] = useState<AccentColor>(session.accentColor);
   const [profileStatus, setProfileStatus] = useState(session.statusText);
   const [profileBio, setProfileBio] = useState(session.bio);
@@ -1231,7 +1227,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   }
 
   function chooseOutputVolume(value: number) {
-    localStorage.setItem(OUTPUT_VOLUME_KEY, String(value));
+    setOutputVolume(value);
     setOutputVolumeState(value);
   }
 
@@ -1358,8 +1354,6 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   }
 
   const typedParticipants = voice.participants as (LocalParticipant | RemoteParticipant)[];
-  const speakingParticipants = typedParticipants.filter((participant) => voice.speakers.has(participant.identity));
-  const otherParticipants = typedParticipants.filter((participant) => !voice.speakers.has(participant.identity));
 
   return (
     <main className="workspace">
@@ -1720,18 +1714,14 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                 <small>{voice.participants.length}</small>
               </div>
               <div className="member-list-scroll">
-                {speakingParticipants.length > 0 && (
-                  <div className="member-group">
-                    <span className="member-group-title">Falando — {speakingParticipants.length}</span>
-                    {speakingParticipants.map(renderParticipantRow)}
-                  </div>
-                )}
-                {otherParticipants.length > 0 && (
-                  <div className="member-group">
-                    <span className="member-group-title">Conectado — {otherParticipants.length}</span>
-                    {otherParticipants.map(renderParticipantRow)}
-                  </div>
-                )}
+                {/* Lista única e com ordem estável — quem fala só ganha um destaque
+                    visual (borda/fundo verde em .active-speaker), não muda de
+                    posição. Alternar de grupo (Falando/Conectado) a cada fala
+                    fazia a lista inteira pular pra cima e pra baixo. */}
+                <div className="member-group">
+                  <span className="member-group-title">Conectado — {typedParticipants.length}</span>
+                  {typedParticipants.map(renderParticipantRow)}
+                </div>
               </div>
             </aside>
           )}

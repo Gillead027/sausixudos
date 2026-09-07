@@ -18,9 +18,28 @@ const MESSAGE_SPACING_KEY = 'gc:message-spacing-step';
 const UI_ZOOM_KEY = 'gc:ui-zoom-step';
 const UI_ACCENT_KEY = 'gc:ui-accent';
 const UI_ACCENT_ENABLED_KEY = 'gc:ui-accent-enabled';
+const OUTPUT_VOLUME_KEY = 'gc:output-volume';
+
+export function getOutputVolume(): number {
+  const stored = localStorage.getItem(OUTPUT_VOLUME_KEY);
+  // Number(null) é 0, não NaN — sem checar null antes, todo mundo sem
+  // preferência salva abria (e tocaria sons de notificação) com volume 0%.
+  if (stored === null) return 100;
+  const value = Number(stored);
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 100;
+}
+
+export function setOutputVolume(value: number): void {
+  localStorage.setItem(OUTPUT_VOLUME_KEY, String(value));
+}
 
 function readStep(key: string, scales: readonly number[]): number {
-  const raw = Number(localStorage.getItem(key));
+  const stored = localStorage.getItem(key);
+  // Number(null) é 0, não NaN — sem esse "stored === null" antes, todo
+  // usuário sem preferência salva (o caso normal, primeira vez abrindo)
+  // cairia no passo 0 (o menor valor da escala) em vez do padrão real.
+  if (stored === null) return 1;
+  const raw = Number(stored);
   return Number.isInteger(raw) && raw >= 0 && raw < scales.length ? raw : 1;
 }
 
