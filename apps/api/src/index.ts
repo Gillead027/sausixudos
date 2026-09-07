@@ -6,6 +6,8 @@ import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { z } from 'zod';
 import {
   ACCENT_COLORS,
+  AVATAR_DATA_URL_MAX_LENGTH,
+  BANNER_DATA_URL_MAX_LENGTH,
   BIO_MAX_LENGTH,
   DISPLAY_NAME_MAX_LENGTH,
   DISPLAY_NAME_MIN_LENGTH,
@@ -45,7 +47,7 @@ app.use(
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   }),
 );
-app.use(express.json({ limit: '16kb' }));
+app.use(express.json({ limit: '2mb' }));
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -74,11 +76,23 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const dataUrlPattern = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
+
 const profileSchema = z.object({
   accentColor: z.enum(ACCENT_COLORS),
   statusText: z.string().trim().max(STATUS_TEXT_MAX_LENGTH).default(''),
   bio: z.string().trim().max(BIO_MAX_LENGTH).default(''),
   pronouns: z.string().trim().max(PRONOUNS_MAX_LENGTH).default(''),
+  avatarUrl: z
+    .string()
+    .max(AVATAR_DATA_URL_MAX_LENGTH)
+    .refine((value) => value === '' || dataUrlPattern.test(value), 'Avatar inválido.')
+    .default(''),
+  bannerUrl: z
+    .string()
+    .max(BANNER_DATA_URL_MAX_LENGTH)
+    .refine((value) => value === '' || dataUrlPattern.test(value), 'Banner inválido.')
+    .default(''),
 });
 
 const tokenSchema = z.object({ roomId: z.string().min(1).max(32) });
@@ -110,6 +124,8 @@ function toUserSession(user: UserRecord): UserSession {
     statusText: user.statusText,
     bio: user.bio,
     pronouns: user.pronouns,
+    avatarUrl: user.avatarDataUrl,
+    bannerUrl: user.bannerDataUrl,
   };
 }
 
@@ -180,7 +196,15 @@ app.patch('/api/profile', requireSession, (request, response) => {
   }
 
   const user = currentUser(response);
-  updateUserProfile(user.id, body.data.accentColor, body.data.statusText, body.data.bio, body.data.pronouns);
+  updateUserProfile(
+    user.id,
+    body.data.accentColor,
+    body.data.statusText,
+    body.data.bio,
+    body.data.pronouns,
+    body.data.avatarUrl,
+    body.data.bannerUrl,
+  );
   response.json({
     user: toUserSession({
       ...user,
@@ -188,8 +212,20 @@ app.patch('/api/profile', requireSession, (request, response) => {
       statusText: body.data.statusText,
       bio: body.data.bio,
       pronouns: body.data.pronouns,
+      avatarDataUrl: body.data.avatarUrl,
+      bannerDataUrl: body.data.bannerUrl,
     }),
   });
+});
+
+app.get('/api/users/:id/avatar', requireSession, (request, response) => {
+  const id = request.params.id;
+  const user = typeof id === 'string' ? getUserById(id) : undefined;
+  if (!user?.avatarDataUrl) {
+    response.status(404).json({ error: 'Sem avatar.' });
+    return;
+  }
+  response.json({ avatarUrl: user.avatarDataUrl });
 });
 
 app.get('/api/config', requireSession, (_request, response) => {

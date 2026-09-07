@@ -6,6 +6,8 @@ export const PASSWORD_MAX_LENGTH = 72;
 export const STATUS_TEXT_MAX_LENGTH = 60;
 export const BIO_MAX_LENGTH = 300;
 export const PRONOUNS_MAX_LENGTH = 30;
+export const AVATAR_DATA_URL_MAX_LENGTH = 400_000;
+export const BANNER_DATA_URL_MAX_LENGTH = 1_100_000;
 
 export const ACCENT_COLORS = [
   '#4e7960',
@@ -27,6 +29,8 @@ export interface UserSession {
   statusText: string;
   bio: string;
   pronouns: string;
+  avatarUrl: string;
+  bannerUrl: string;
 }
 
 export interface VoiceChannel {

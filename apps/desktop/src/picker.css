@@ -28,6 +28,18 @@ main { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(3
 .source small { margin-top: 2px; color: #949ba4; font-size: 10px; }
 #status { grid-column: 1 / -1; padding: 24px; color: #949ba4; font-size: 12px; }
 
+.options { display: flex; align-items: center; gap: 20px; padding: 4px 20px 14px; border-top: 1px solid #26272b; background: #313338; }
+.options > label { display: flex; flex-direction: column; gap: 4px; font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: #949ba4; }
+.options select { height: 32px; padding: 0 8px; border: 1px solid #3f4147; border-radius: 4px; color: #f2f3f5; background: #1e1f22; font: inherit; font-size: 12px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.options-toggle { flex-direction: row !important; align-items: center; gap: 10px !important; margin-left: auto; }
+.options-toggle span { display: flex; flex-direction: column; gap: 1px; }
+.options-toggle strong { color: #f2f3f5; font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.options-toggle small { color: #949ba4; font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; }
+.options-toggle input[type="checkbox"] { width: 36px; height: 20px; margin: 0; appearance: none; position: relative; border-radius: 999px; background: #3f4147; cursor: pointer; transition: background-color 140ms; }
+.options-toggle input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 140ms; }
+.options-toggle input[type="checkbox"]:checked { background: #4e7960; }
+.options-toggle input[type="checkbox"]:checked::after { transform: translateX(16px); }
+
 footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid #26272b; background: #2b2d31; }
 footer button { min-width: 96px; height: 36px; padding: 0 16px; border: 0; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .btn-secondary { color: #f2f3f5; background: #3f4147; }

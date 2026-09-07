@@ -11,6 +11,8 @@ export interface UserRecord {
   statusText: string;
   bio: string;
   pronouns: string;
+  avatarDataUrl: string;
+  bannerDataUrl: string;
 }
 
 interface UserRow {
@@ -21,6 +23,8 @@ interface UserRow {
   status_text: string;
   bio: string;
   pronouns: string;
+  avatar_data_url: string;
+  banner_data_url: string;
 }
 
 function toRecord(row: UserRow): UserRecord {
@@ -32,6 +36,8 @@ function toRecord(row: UserRow): UserRecord {
     statusText: row.status_text,
     bio: row.bio,
     pronouns: row.pronouns,
+    avatarDataUrl: row.avatar_data_url,
+    bannerDataUrl: row.banner_data_url,
   };
 }
 
@@ -41,14 +47,24 @@ const insertUser = db.prepare(
 const selectByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
 const selectById = db.prepare('SELECT * FROM users WHERE id = ?');
 const updateProfileStatement = db.prepare(
-  'UPDATE users SET accent_color = ?, status_text = ?, bio = ?, pronouns = ? WHERE id = ?',
+  'UPDATE users SET accent_color = ?, status_text = ?, bio = ?, pronouns = ?, avatar_data_url = ?, banner_data_url = ? WHERE id = ?',
 );
 
 export function createUser(username: string, password: string, accentColor: AccentColor): UserRecord {
   const id = randomUUID();
   const passwordHash = bcrypt.hashSync(password, 10);
   insertUser.run(id, username, passwordHash, accentColor, '', Date.now());
-  return { id, username, passwordHash, accentColor, statusText: '', bio: '', pronouns: '' };
+  return {
+    id,
+    username,
+    passwordHash,
+    accentColor,
+    statusText: '',
+    bio: '',
+    pronouns: '',
+    avatarDataUrl: '',
+    bannerDataUrl: '',
+  };
 }
 
 export function getUserByUsername(username: string): UserRecord | undefined {
@@ -71,6 +87,8 @@ export function updateUserProfile(
   statusText: string,
   bio: string,
   pronouns: string,
+  avatarDataUrl: string,
+  bannerDataUrl: string,
 ): void {
-  updateProfileStatement.run(accentColor, statusText, bio, pronouns, id);
+  updateProfileStatement.run(accentColor, statusText, bio, pronouns, avatarDataUrl, bannerDataUrl, id);
 }

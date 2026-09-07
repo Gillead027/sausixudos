@@ -1,0 +1,92 @@
+export const CHAT_FONT_SCALES = [85, 100, 115, 130, 150] as const;
+export const MESSAGE_SPACING_SCALES = [75, 100, 125, 150, 175] as const;
+export const UI_ZOOM_SCALES = [90, 100, 110, 125, 150] as const;
+
+export const UI_ACCENT_SWATCHES = [
+  '#4e7960',
+  '#5c526b',
+  '#566747',
+  '#6b5548',
+  '#45645f',
+  '#684d52',
+  '#4a6b8a',
+  '#8a5a4a',
+] as const;
+
+const CHAT_FONT_KEY = 'gc:chat-font-step';
+const MESSAGE_SPACING_KEY = 'gc:message-spacing-step';
+const UI_ZOOM_KEY = 'gc:ui-zoom-step';
+const UI_ACCENT_KEY = 'gc:ui-accent';
+const UI_ACCENT_ENABLED_KEY = 'gc:ui-accent-enabled';
+
+function readStep(key: string, scales: readonly number[]): number {
+  const raw = Number(localStorage.getItem(key));
+  return Number.isInteger(raw) && raw >= 0 && raw < scales.length ? raw : 1;
+}
+
+export function getChatFontStep(): number {
+  return readStep(CHAT_FONT_KEY, CHAT_FONT_SCALES);
+}
+
+export function getMessageSpacingStep(): number {
+  return readStep(MESSAGE_SPACING_KEY, MESSAGE_SPACING_SCALES);
+}
+
+export function getUiZoomStep(): number {
+  return readStep(UI_ZOOM_KEY, UI_ZOOM_SCALES);
+}
+
+export function applyChatFontStep(step: number): void {
+  document.documentElement.setAttribute('data-chat-font-scale', String(CHAT_FONT_SCALES[step]));
+}
+
+export function applyMessageSpacingStep(step: number): void {
+  document.documentElement.setAttribute('data-message-spacing-scale', String(MESSAGE_SPACING_SCALES[step]));
+}
+
+export function applyUiZoomStep(step: number): void {
+  document.documentElement.setAttribute('data-ui-zoom-scale', String(UI_ZOOM_SCALES[step]));
+}
+
+export function setChatFontStep(step: number): void {
+  localStorage.setItem(CHAT_FONT_KEY, String(step));
+  applyChatFontStep(step);
+}
+
+export function setMessageSpacingStep(step: number): void {
+  localStorage.setItem(MESSAGE_SPACING_KEY, String(step));
+  applyMessageSpacingStep(step);
+}
+
+export function setUiZoomStep(step: number): void {
+  localStorage.setItem(UI_ZOOM_KEY, String(step));
+  applyUiZoomStep(step);
+}
+
+export function getUiAccent(): { color: string; enabled: boolean } {
+  const color = localStorage.getItem(UI_ACCENT_KEY) || UI_ACCENT_SWATCHES[0];
+  const enabled = localStorage.getItem(UI_ACCENT_ENABLED_KEY) === 'true';
+  return { color, enabled };
+}
+
+export function applyUiAccent(color: string, enabled: boolean): void {
+  if (enabled) {
+    document.documentElement.style.setProperty('--accent', color);
+  } else {
+    document.documentElement.style.removeProperty('--accent');
+  }
+}
+
+export function setUiAccent(color: string, enabled: boolean): void {
+  localStorage.setItem(UI_ACCENT_KEY, color);
+  localStorage.setItem(UI_ACCENT_ENABLED_KEY, String(enabled));
+  applyUiAccent(color, enabled);
+}
+
+export function bootAppearancePrefs(): void {
+  applyChatFontStep(getChatFontStep());
+  applyMessageSpacingStep(getMessageSpacingStep());
+  applyUiZoomStep(getUiZoomStep());
+  const { color, enabled } = getUiAccent();
+  applyUiAccent(color, enabled);
+}

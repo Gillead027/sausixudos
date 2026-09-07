@@ -74,6 +74,14 @@ export function UserIcon(props: IconProps) {
   return <Icon {...props}><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" /></Icon>;
 }
 
+export function SearchIcon(props: IconProps) {
+  return <Icon {...props}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></Icon>;
+}
+
+export function ImageIcon(props: IconProps) {
+  return <Icon {...props}><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.6" /><path d="m21 15-5-5-11 11" /></Icon>;
+}
+
 export function PaletteIcon(props: IconProps) {
   return <Icon {...props}><circle cx="12" cy="12" r="9" /><circle cx="8.5" cy="10" r="1.3" fill="currentColor" /><circle cx="12" cy="8" r="1.3" fill="currentColor" /><circle cx="15.5" cy="10" r="1.3" fill="currentColor" /><path d="M12 21a1.6 1.6 0 0 1 0-9c2 0 3-1 3-2.5S14 7 12 7" /></Icon>;
 }

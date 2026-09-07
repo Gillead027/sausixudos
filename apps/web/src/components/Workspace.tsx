@@ -8,10 +8,27 @@ import {
   Track,
   type TrackPublication,
 } from 'livekit-client';
+import { AVATAR_DATA_URL_MAX_LENGTH, BANNER_DATA_URL_MAX_LENGTH } from '@sausixudos/shared';
 import { api } from '../api';
 import { useDelayedUnmount } from '../hooks/useDelayedUnmount';
 import { type InputMode, type ShareQuality, useVoiceRoom } from '../livekit/useVoiceRoom';
 import { getPerfMode, type PerfMode, setPerfMode } from '../perfMode';
+import { getDensity, type Density, setDensity } from '../density';
+import { getTheme, type ThemeMode, setTheme } from '../theme';
+import {
+  CHAT_FONT_SCALES,
+  getChatFontStep,
+  getMessageSpacingStep,
+  getUiAccent,
+  getUiZoomStep,
+  MESSAGE_SPACING_SCALES,
+  setChatFontStep,
+  setMessageSpacingStep,
+  setUiAccent,
+  setUiZoomStep,
+  UI_ACCENT_SWATCHES,
+  UI_ZOOM_SCALES,
+} from '../appearancePrefs';
 import {
   CameraIcon,
   CameraOffIcon,
@@ -19,12 +36,14 @@ import {
   CloseIcon,
   HeadphonesIcon,
   HeadphonesOffIcon,
+  ImageIcon,
   LeaveIcon,
   MessageIcon,
   MicIcon,
   MicOffIcon,
   PaletteIcon,
   PlusIcon,
+  SearchIcon,
   SettingsIcon,
   ShareIcon,
   UserIcon,
@@ -33,11 +52,49 @@ import {
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
 
-type MessageStyle = 'default' | 'compact';
+type MessageStyle = 'default' | 'compact' | 'grouped';
 const MESSAGE_STYLE_KEY = 'gc:message-style';
+const OUTPUT_VOLUME_KEY = 'gc:output-volume';
+const VALID_MESSAGE_STYLES: MessageStyle[] = ['default', 'compact', 'grouped'];
 
 function loadMessageStyle(): MessageStyle {
-  return localStorage.getItem(MESSAGE_STYLE_KEY) === 'compact' ? 'compact' : 'default';
+  const stored = localStorage.getItem(MESSAGE_STYLE_KEY);
+  return VALID_MESSAGE_STYLES.includes(stored as MessageStyle) ? (stored as MessageStyle) : 'default';
+}
+
+function loadOutputVolume(): number {
+  const stored = Number(localStorage.getItem(OUTPUT_VOLUME_KEY));
+  return Number.isFinite(stored) && stored >= 0 && stored <= 100 ? stored : 100;
+}
+
+const THEME_OPTIONS: { value: ThemeMode; label: string; swatch: string }[] = [
+  { value: 'claro', label: 'Claro', swatch: '#ffffff' },
+  { value: 'ash', label: 'Ash', swatch: '#3c3f44' },
+  { value: 'escuro', label: 'Escuro', swatch: '#313338' },
+  { value: 'onyx', label: 'Onyx', swatch: '#000000' },
+  { value: 'sistema', label: 'Sistema', swatch: 'linear-gradient(135deg, #ffffff 50%, #1e1f22 50%)' },
+];
+
+/** Redimensiona e recomprime uma imagem localmente até caber no limite de bytes, sem subir nenhum arquivo pro servidor separado — o resultado vira uma data: URL persistida junto do perfil. */
+async function fileToResizedDataUrl(file: File, maxDimension: number, maxLength: number): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Não foi possível processar a imagem.');
+  context.drawImage(bitmap, 0, 0, width, height);
+  let quality = 0.88;
+  let dataUrl = canvas.toDataURL('image/jpeg', quality);
+  while (dataUrl.length > maxLength && quality > 0.25) {
+    quality -= 0.12;
+    dataUrl = canvas.toDataURL('image/jpeg', quality);
+  }
+  if (dataUrl.length > maxLength) throw new Error('Imagem muito grande mesmo após compressão.');
+  return dataUrl;
 }
 
 interface WorkspaceProps {
@@ -51,6 +108,14 @@ type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
 };
 
+declare global {
+  interface Window {
+    desktop?: {
+      chooseShareSource: () => Promise<{ quality: ShareQuality; shareAudio: boolean } | null>;
+    };
+  }
+}
+
 function avatarLetter(name: string): string {
   return name.trim().charAt(0).toUpperCase() || '?';
 }
@@ -63,23 +128,51 @@ function avatarColorIndex(name: string): number {
 function Avatar({
   name,
   accentColor,
+  avatarUrl,
   speaking = false,
   compact = false,
 }: {
   name: string;
   accentColor?: AccentColor | undefined;
+  avatarUrl?: string | undefined;
   speaking?: boolean;
   compact?: boolean;
 }) {
   const colorIndex = accentColor ? ACCENT_COLORS.indexOf(accentColor) : avatarColorIndex(name);
+  const className = `avatar ${avatarUrl ? '' : `avatar-color-${colorIndex}`} ${speaking ? 'speaking' : ''} ${compact ? 'compact' : ''}`;
   return (
-    <span
-      className={`avatar avatar-color-${colorIndex} ${speaking ? 'speaking' : ''} ${compact ? 'compact' : ''}`}
-    >
-      {avatarLetter(name)}
+    <span className={className}>
+      {avatarUrl ? <img src={avatarUrl} alt={name} /> : avatarLetter(name)}
       <span className="presence-dot" />
     </span>
   );
+}
+
+const remoteAvatarCache = new Map<string, string>();
+
+function useRemoteAvatar(participant: LocalParticipant | RemoteParticipant, ownAvatarUrl: string): string | undefined {
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    if (participant instanceof LocalParticipant) return;
+    if (remoteAvatarCache.has(participant.identity)) return;
+    let active = true;
+    void api
+      .getUserAvatar(participant.identity)
+      .then(({ avatarUrl }) => {
+        if (!active) return;
+        remoteAvatarCache.set(participant.identity, avatarUrl);
+        forceRender((value) => value + 1);
+      })
+      .catch(() => {
+        if (active) remoteAvatarCache.set(participant.identity, '');
+      });
+    return () => {
+      active = false;
+    };
+  }, [participant]);
+
+  if (participant instanceof LocalParticipant) return ownAvatarUrl || undefined;
+  return remoteAvatarCache.get(participant.identity) || undefined;
 }
 
 function participantAccentColor(
@@ -230,6 +323,8 @@ function ParticipantRow({
   volume,
   setVolume,
   accentColor,
+  ownAvatarUrl,
+  outputVolume,
 }: {
   participant: LocalParticipant | RemoteParticipant;
   speaking: boolean;
@@ -237,9 +332,12 @@ function ParticipantRow({
   volume: number;
   setVolume: (value: number) => void;
   accentColor?: AccentColor | undefined;
+  ownAvatarUrl: string;
+  outputVolume: number;
 }) {
   const name = participant.name || participant.identity;
   const local = participant instanceof LocalParticipant;
+  const avatarUrl = useRemoteAvatar(participant, ownAvatarUrl);
   const microphone = participant.getTrackPublication(Track.Source.Microphone);
   const muted = !microphone || microphone.isMuted;
   const audioPublications = participant.audioTrackPublications as Map<string, TrackPublication>;
@@ -250,7 +348,7 @@ function ParticipantRow({
   return (
     <div className={`participant-row ${speaking ? 'active-speaker' : ''}`}>
       <div className="participant-main">
-        <Avatar name={name} accentColor={accentColor} speaking={speaking} compact />
+        <Avatar name={name} accentColor={accentColor} avatarUrl={avatarUrl} speaking={speaking} compact />
         <div className="participant-copy">
           <strong>{name}{local ? ' (você)' : ''}</strong>
           <span>{speaking ? 'Falando' : muted ? 'Microfone desligado' : 'Conectado'}</span>
@@ -272,7 +370,13 @@ function ParticipantRow({
         </label>
       )}
       {!local && participant instanceof RemoteParticipant && (
-        <RemoteAudioSink participant={participant} volume={volume} deafened={deafened} trackVersion={trackVersion} />
+        <RemoteAudioSink
+          participant={participant}
+          volume={volume}
+          outputVolume={outputVolume}
+          deafened={deafened}
+          trackVersion={trackVersion}
+        />
       )}
     </div>
   );
@@ -412,6 +516,20 @@ function SettingsModal({
   choosePerfMode,
   messageStyle,
   setMessageStyle,
+  themeMode,
+  chooseTheme,
+  density,
+  chooseDensity,
+  chatFontStep,
+  chooseChatFontStep,
+  messageSpacingStep,
+  chooseMessageSpacingStep,
+  uiZoomStep,
+  chooseUiZoomStep,
+  uiAccent,
+  chooseUiAccent,
+  outputVolume,
+  chooseOutputVolume,
   profileColor,
   setProfileColor,
   profileStatus,
@@ -420,8 +538,13 @@ function SettingsModal({
   setProfileBio,
   profilePronouns,
   setProfilePronouns,
+  profileAvatar,
+  setProfileAvatar,
+  profileBanner,
+  setProfileBanner,
   savingProfile,
   onSaveProfile,
+  onCancelProfile,
   onSignOut,
   audioInputs,
   audioOutputs,
@@ -448,6 +571,20 @@ function SettingsModal({
   choosePerfMode: (mode: PerfMode) => void;
   messageStyle: MessageStyle;
   setMessageStyle: (style: MessageStyle) => void;
+  themeMode: ThemeMode;
+  chooseTheme: (mode: ThemeMode) => void;
+  density: Density;
+  chooseDensity: (value: Density) => void;
+  chatFontStep: number;
+  chooseChatFontStep: (step: number) => void;
+  messageSpacingStep: number;
+  chooseMessageSpacingStep: (step: number) => void;
+  uiZoomStep: number;
+  chooseUiZoomStep: (step: number) => void;
+  uiAccent: { color: string; enabled: boolean };
+  chooseUiAccent: (color: string, enabled: boolean) => void;
+  outputVolume: number;
+  chooseOutputVolume: (value: number) => void;
   profileColor: AccentColor;
   setProfileColor: (color: AccentColor) => void;
   profileStatus: string;
@@ -456,8 +593,13 @@ function SettingsModal({
   setProfileBio: (bio: string) => void;
   profilePronouns: string;
   setProfilePronouns: (pronouns: string) => void;
+  profileAvatar: string;
+  setProfileAvatar: (value: string) => void;
+  profileBanner: string;
+  setProfileBanner: (value: string) => void;
   savingProfile: boolean;
   onSaveProfile: () => void;
+  onCancelProfile: () => void;
   onSignOut: () => void;
   audioInputs: MediaDeviceInfo[];
   audioOutputs: MediaDeviceInfo[];
@@ -475,6 +617,33 @@ function SettingsModal({
   setPttKeyBinding: (code: string) => void;
 }) {
   const [listeningForKey, setListeningForKey] = useState(false);
+  const [voiceSearch, setVoiceSearch] = useState('');
+  const [avatarError, setAvatarError] = useState('');
+  const [bannerError, setBannerError] = useState('');
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleAvatarFile(file: File | undefined) {
+    if (!file) return;
+    setAvatarError('');
+    try {
+      setProfileAvatar(await fileToResizedDataUrl(file, 256, AVATAR_DATA_URL_MAX_LENGTH));
+    } catch {
+      setAvatarError('Não foi possível usar essa imagem. Tente um arquivo menor.');
+    }
+  }
+
+  async function handleBannerFile(file: File | undefined) {
+    if (!file) return;
+    setBannerError('');
+    try {
+      setProfileBanner(await fileToResizedDataUrl(file, 960, BANNER_DATA_URL_MAX_LENGTH));
+    } catch {
+      setBannerError('Não foi possível usar essa imagem. Tente um arquivo menor.');
+    }
+  }
+
+  const matchesSearch = (label: string) => voiceSearch.trim() === '' || label.toLowerCase().includes(voiceSearch.trim().toLowerCase());
 
   useEffect(() => {
     if (!listeningForKey) return;
@@ -514,12 +683,12 @@ function SettingsModal({
           <button type="button" className={section === 'profile' ? 'active' : ''} onClick={() => setSection('profile')}>
             <UserIcon size={15} /> Meu perfil
           </button>
-          <span className="settings-nav-group">Aparência</span>
-          <button type="button" className={section === 'voice' ? 'active' : ''} onClick={() => setSection('voice')}>
-            <VoiceIcon size={15} /> Voz e vídeo
-          </button>
+          <span className="settings-nav-group">Preferências</span>
           <button type="button" className={section === 'appearance' ? 'active' : ''} onClick={() => setSection('appearance')}>
             <PaletteIcon size={15} /> Aparência
+          </button>
+          <button type="button" className={section === 'voice' ? 'active' : ''} onClick={() => setSection('voice')}>
+            <VoiceIcon size={15} /> Voz e vídeo
           </button>
           <span className="settings-nav-divider" />
           <button type="button" className="settings-nav-signout" onClick={onSignOut}>
@@ -532,7 +701,47 @@ function SettingsModal({
             <div className="settings-pane two-column">
               <div className="settings-pane-main">
                 <h2>Meu perfil</h2>
-                <label htmlFor="profile-status">Status</label>
+                <label className="settings-label">Banner do perfil</label>
+                <div className="profile-banner-field">
+                  {profileBanner && <img src={profileBanner} alt="" />}
+                  <input
+                    ref={bannerInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    hidden
+                    onChange={(event) => void handleBannerFile(event.target.files?.[0])}
+                  />
+                  <button type="button" onClick={() => bannerInputRef.current?.click()}>
+                    <ImageIcon size={13} /> Alterar banner
+                  </button>
+                </div>
+                {bannerError && <p className="settings-hint">{bannerError}</p>}
+                <p className="settings-hint">Recomendado: 1920×480. Máximo 800KB (redimensionado automaticamente). Formatos: PNG, JPG ou WEBP.</p>
+
+                <div className="profile-avatar-field">
+                  <Avatar name={session.displayName} accentColor={profileColor} avatarUrl={profileAvatar} />
+                  <div className="profile-avatar-actions">
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      hidden
+                      onChange={(event) => void handleAvatarFile(event.target.files?.[0])}
+                    />
+                    <button type="button" className="test-toggle-button" onClick={() => avatarInputRef.current?.click()}>
+                      Alterar avatar
+                    </button>
+                    {profileAvatar && (
+                      <button type="button" className="test-toggle-button" onClick={() => setProfileAvatar('')}>
+                        Remover
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {avatarError && <p className="settings-hint">{avatarError}</p>}
+                <p className="settings-hint">Recomendado: 512×512. Máximo 300KB (redimensionado automaticamente).</p>
+
+                <label htmlFor="profile-status">Status<span className="field-char-count">{profileStatus.length}/60</span></label>
                 <input
                   id="profile-status"
                   maxLength={60}
@@ -540,7 +749,7 @@ function SettingsModal({
                   onChange={(event) => setProfileStatus(event.target.value)}
                   placeholder="Seu status (opcional)"
                 />
-                <label htmlFor="profile-pronouns">Pronomes</label>
+                <label htmlFor="profile-pronouns">Pronomes<span className="field-char-count">{profilePronouns.length}/30</span></label>
                 <input
                   id="profile-pronouns"
                   maxLength={30}
@@ -548,7 +757,7 @@ function SettingsModal({
                   onChange={(event) => setProfilePronouns(event.target.value)}
                   placeholder="ex.: ele/dele, ela/dela (opcional)"
                 />
-                <label htmlFor="profile-bio">Sobre mim</label>
+                <label htmlFor="profile-bio">Sobre mim<span className="field-char-count">{profileBio.length}/300</span></label>
                 <textarea
                   id="profile-bio"
                   className="profile-bio-input"
@@ -573,15 +782,24 @@ function SettingsModal({
                     />
                   ))}
                 </div>
-                <button className="save-profile-button" type="button" disabled={savingProfile} onClick={onSaveProfile}>
-                  {savingProfile ? 'Salvando…' : 'Salvar alterações'}
-                </button>
+                <div className="profile-form-actions">
+                  <button className="test-toggle-button" type="button" onClick={onCancelProfile} disabled={savingProfile}>
+                    Cancelar
+                  </button>
+                  <button className="save-profile-button" type="button" disabled={savingProfile} onClick={onSaveProfile}>
+                    {savingProfile ? 'Salvando…' : 'Salvar alterações'}
+                  </button>
+                </div>
               </div>
               <div className="settings-pane-side">
                 <span className="settings-side-title">Pré-visualização</span>
                 <div className="profile-preview">
-                  <div className={`profile-preview-banner avatar-color-${ACCENT_COLORS.indexOf(profileColor)}`} />
-                  <Avatar name={session.displayName} accentColor={profileColor} />
+                  {profileBanner ? (
+                    <img className="profile-preview-banner has-image" src={profileBanner} alt="" />
+                  ) : (
+                    <div className={`profile-preview-banner avatar-color-${ACCENT_COLORS.indexOf(profileColor)}`} />
+                  )}
+                  <Avatar name={session.displayName} accentColor={profileColor} avatarUrl={profileAvatar} />
                   <strong>{session.displayName}</strong>
                   {profilePronouns && <em>{profilePronouns}</em>}
                   {profileStatus && <span>{profileStatus}</span>}
@@ -594,86 +812,135 @@ function SettingsModal({
           {section === 'voice' && (
             <div className="settings-pane two-column">
               <div className="settings-pane-main">
-                <h2>Voz e vídeo</h2>
-                <div className="settings-field-row">
-                  <div>
-                    <label htmlFor="mic-device">Dispositivo de entrada</label>
-                    <select id="mic-device" value={selectedMicId} onChange={(event) => setMicrophoneDevice(event.target.value)}>
-                      <option value="default">Padrão do sistema</option>
-                      {audioInputs.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label || 'Microfone'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="speaker-device">Dispositivo de saída</label>
-                    <select id="speaker-device" value={selectedSpeakerId} onChange={(event) => setSpeakerDevice(event.target.value)}>
-                      <option value="default">Padrão do sistema</option>
-                      {audioOutputs.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label || 'Saída de áudio'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="settings-pane-heading-row">
+                  <h2>Voz e vídeo</h2>
+                  <label className="settings-search" aria-label="Buscar nas configurações">
+                    <SearchIcon size={14} />
+                    <input
+                      type="text"
+                      placeholder="Buscar nas configurações"
+                      value={voiceSearch}
+                      onChange={(event) => setVoiceSearch(event.target.value)}
+                    />
+                  </label>
                 </div>
 
-                <span className="settings-label">Teste de microfone</span>
-                <MicTest deviceId={selectedMicId} />
+                {(matchesSearch('dispositivo de entrada') || matchesSearch('dispositivo de saída') || matchesSearch('volume')) && (
+                  <div className="settings-field-row">
+                    {matchesSearch('dispositivo de entrada') && (
+                      <div>
+                        <label htmlFor="mic-device">Dispositivo de entrada</label>
+                        <select id="mic-device" value={selectedMicId} onChange={(event) => setMicrophoneDevice(event.target.value)}>
+                          <option value="default">Padrão do sistema</option>
+                          {audioInputs.map((device) => (
+                            <option key={device.deviceId} value={device.deviceId}>
+                              {device.label || 'Microfone'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {matchesSearch('dispositivo de saída') && (
+                      <div>
+                        <label htmlFor="speaker-device">Dispositivo de saída</label>
+                        <select id="speaker-device" value={selectedSpeakerId} onChange={(event) => setSpeakerDevice(event.target.value)}>
+                          <option value="default">Padrão do sistema</option>
+                          {audioOutputs.map((device) => (
+                            <option key={device.deviceId} value={device.deviceId}>
+                              {device.label || 'Saída de áudio'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {matchesSearch('volume de saída') && (
+                      <div>
+                        <label htmlFor="output-volume">Volume de saída</label>
+                        <div className="pref-slider-row">
+                          <input
+                            id="output-volume"
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={outputVolume}
+                            onChange={(event) => chooseOutputVolume(Number(event.target.value))}
+                          />
+                          <output>{outputVolume}%</output>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                <span className="settings-label">Modo de entrada</span>
-                <div className="input-mode-cards" role="group" aria-label="Modo de entrada de voz">
-                  <button type="button" className={`input-mode-card ${inputMode === 'voice' ? 'active' : ''}`} onClick={() => setInputMode('voice')}>
-                    <MicIcon size={18} />
-                    <strong>Voz ativa</strong>
-                    <span>O microfone é ativado automaticamente quando você fala.</span>
-                  </button>
-                  <button type="button" className={`input-mode-card ${inputMode === 'ptt' ? 'active' : ''}`} onClick={() => setInputMode('ptt')}>
-                    <MicOffIcon size={18} />
-                    <strong>Push to talk</strong>
-                    <span>O microfone só é ativado quando você pressiona uma tecla.</span>
-                  </button>
-                </div>
-
-                {inputMode === 'ptt' && (
+                {matchesSearch('teste de microfone') && (
                   <>
-                    <label htmlFor="ptt-key">Tecla de push-to-talk</label>
-                    <button
-                      id="ptt-key"
-                      type="button"
-                      className="ptt-key-button"
-                      onClick={() => setListeningForKey(true)}
-                    >
-                      {listeningForKey ? 'Pressione uma tecla…' : pttKey}
-                    </button>
+                    <span className="settings-label">Teste de microfone</span>
+                    <MicTest deviceId={selectedMicId} />
                   </>
                 )}
 
-                <label htmlFor="share-quality">Qualidade da transmissão de tela</label>
-                <select
-                  id="share-quality"
-                  value={quality}
-                  onChange={(event) => setQuality(event.target.value as ShareQuality)}
-                  disabled={screenEnabled}
-                >
-                  <option value="720p30">720p · 30 FPS</option>
-                  <option value="720p60">720p · 60 FPS</option>
-                  <option value="1080p60">1080p · 60 FPS</option>
-                </select>
+                {matchesSearch('modo de entrada') && (
+                  <>
+                    <span className="settings-label">Modo de entrada</span>
+                    <div className="input-mode-cards" role="group" aria-label="Modo de entrada de voz">
+                      <button type="button" className={`input-mode-card ${inputMode === 'voice' ? 'active' : ''}`} onClick={() => setInputMode('voice')}>
+                        <MicIcon size={18} />
+                        <strong>Voz ativa</strong>
+                        <span>O microfone é ativado automaticamente quando você fala.</span>
+                      </button>
+                      <button type="button" className={`input-mode-card ${inputMode === 'ptt' ? 'active' : ''}`} onClick={() => setInputMode('ptt')}>
+                        <MicOffIcon size={18} />
+                        <strong>Push to talk</strong>
+                        <span>O microfone só é ativado quando você pressiona uma tecla.</span>
+                      </button>
+                    </div>
+                    {inputMode === 'ptt' && (
+                      <>
+                        <label htmlFor="ptt-key">Tecla de push-to-talk</label>
+                        <button
+                          id="ptt-key"
+                          type="button"
+                          className="ptt-key-button"
+                          onClick={() => setListeningForKey(true)}
+                        >
+                          {listeningForKey ? 'Pressione uma tecla…' : pttKey}
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {matchesSearch('qualidade da transmissão de tela') && (
+                  <>
+                    <label htmlFor="share-quality">Qualidade da transmissão de tela</label>
+                    <select
+                      id="share-quality"
+                      value={quality}
+                      onChange={(event) => setQuality(event.target.value as ShareQuality)}
+                      disabled={screenEnabled}
+                    >
+                      <option value="720p30">720p · 30 FPS</option>
+                      <option value="720p60">720p · 60 FPS</option>
+                      <option value="1080p60">1080p · 60 FPS</option>
+                    </select>
+                  </>
+                )}
               </div>
               <div className="settings-pane-side">
-                <span className="settings-side-title">Câmera</span>
-                <select id="camera-device" value={selectedCameraId} onChange={(event) => setCameraDevice(event.target.value)}>
-                  <option value="default">Padrão do sistema</option>
-                  {videoInputs.map((device) => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || 'Câmera'}
-                    </option>
-                  ))}
-                </select>
-                <CameraPreview deviceId={selectedCameraId} />
+                {matchesSearch('câmera') && (
+                  <>
+                    <span className="settings-side-title">Câmera</span>
+                    <select id="camera-device" value={selectedCameraId} onChange={(event) => setCameraDevice(event.target.value)}>
+                      <option value="default">Padrão do sistema</option>
+                      {videoInputs.map((device) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || 'Câmera'}
+                        </option>
+                      ))}
+                    </select>
+                    <CameraPreview deviceId={selectedCameraId} />
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -682,7 +949,23 @@ function SettingsModal({
             <div className="settings-pane two-column">
               <div className="settings-pane-main">
                 <h2>Aparência</h2>
-                <span className="settings-label">Desempenho</span>
+
+                <span className="settings-label">Tema</span>
+                <div className="theme-cards" role="group" aria-label="Tema">
+                  {THEME_OPTIONS.map((theme) => (
+                    <button
+                      key={theme.value}
+                      type="button"
+                      className={`theme-card ${themeMode === theme.value ? 'active' : ''}`}
+                      onClick={() => chooseTheme(theme.value)}
+                    >
+                      <span className="theme-card-swatch" style={{ background: theme.swatch }} />
+                      <span>{theme.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <span className="settings-label">Modo de desempenho</span>
                 <div className="perf-toggle" role="group" aria-label="Modo de desempenho">
                   <button type="button" className={perfMode === 'full' ? 'active' : ''} onClick={() => choosePerfMode('full')}>
                     Completo
@@ -695,22 +978,77 @@ function SettingsModal({
                   O modo leve desliga animações e efeitos visuais para PCs mais fracos.
                 </p>
 
-                <span className="settings-label">Exibição das mensagens</span>
-                <div className="perf-toggle" role="group" aria-label="Estilo de exibição das mensagens">
+                <span className="settings-label">Densidade da interface</span>
+                <div className="perf-toggle three-way" role="group" aria-label="Densidade da interface">
+                  <button type="button" className={density === 'compacta' ? 'active' : ''} onClick={() => chooseDensity('compacta')}>
+                    Compacta
+                  </button>
+                  <button type="button" className={density === 'padrao' ? 'active' : ''} onClick={() => chooseDensity('padrao')}>
+                    Padrão
+                  </button>
+                  <button type="button" className={density === 'confortavel' ? 'active' : ''} onClick={() => chooseDensity('confortavel')}>
+                    Confortável
+                  </button>
+                </div>
+
+                <span className="settings-label">Estilo de exibição das mensagens</span>
+                <div className="perf-toggle three-way" role="group" aria-label="Estilo de exibição das mensagens">
                   <button type="button" className={messageStyle === 'default' ? 'active' : ''} onClick={() => setMessageStyle('default')}>
                     Padrão
                   </button>
                   <button type="button" className={messageStyle === 'compact' ? 'active' : ''} onClick={() => setMessageStyle('compact')}>
                     Compacto
                   </button>
+                  <button type="button" className={messageStyle === 'grouped' ? 'active' : ''} onClick={() => setMessageStyle('grouped')}>
+                    Agrupado
+                  </button>
+                </div>
+
+                <label htmlFor="chat-font-slider">Tamanho da fonte do chat</label>
+                <div className="pref-slider-row">
+                  <input
+                    id="chat-font-slider"
+                    type="range"
+                    min={0}
+                    max={CHAT_FONT_SCALES.length - 1}
+                    value={chatFontStep}
+                    onChange={(event) => chooseChatFontStep(Number(event.target.value))}
+                  />
+                  <output>{CHAT_FONT_SCALES[chatFontStep]}%</output>
+                </div>
+
+                <label htmlFor="message-spacing-slider">Espaçamento entre mensagens</label>
+                <div className="pref-slider-row">
+                  <input
+                    id="message-spacing-slider"
+                    type="range"
+                    min={0}
+                    max={MESSAGE_SPACING_SCALES.length - 1}
+                    value={messageSpacingStep}
+                    onChange={(event) => chooseMessageSpacingStep(Number(event.target.value))}
+                  />
+                  <output>{MESSAGE_SPACING_SCALES[messageSpacingStep]}%</output>
+                </div>
+
+                <label htmlFor="ui-zoom-slider">Zoom da interface</label>
+                <div className="pref-slider-row">
+                  <input
+                    id="ui-zoom-slider"
+                    type="range"
+                    min={0}
+                    max={UI_ZOOM_SCALES.length - 1}
+                    value={uiZoomStep}
+                    onChange={(event) => chooseUiZoomStep(Number(event.target.value))}
+                  />
+                  <output>{UI_ZOOM_SCALES[uiZoomStep]}%</output>
                 </div>
               </div>
               <div className="settings-pane-side">
                 <span className="settings-side-title">Pré-visualização</span>
                 <div className="appearance-preview">
-                  <div className={`messages ${messageStyle === 'compact' ? 'compact' : ''}`}>
+                  <div className={`messages ${messageStyle === 'compact' ? 'compact' : ''} ${messageStyle === 'grouped' ? 'grouped' : ''}`}>
                     <article className="message">
-                      <Avatar name={session.displayName} accentColor={profileColor} compact />
+                      <Avatar name={session.displayName} accentColor={profileColor} avatarUrl={profileAvatar} compact />
                       <div>
                         <header>
                           <strong>{session.displayName}</strong>
@@ -730,6 +1068,50 @@ function SettingsModal({
                       </div>
                     </article>
                   </div>
+                </div>
+
+                <span className="settings-side-title">Cores e personalização</span>
+                <div className="ui-accent-row">
+                  <div className="accent-picker">
+                    {UI_ACCENT_SWATCHES.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        role="radio"
+                        aria-checked={uiAccent.enabled && uiAccent.color === color}
+                        aria-label={`Cor ${color}`}
+                        className={`accent-swatch ${uiAccent.enabled && uiAccent.color === color ? 'selected' : ''}`}
+                        data-color={color}
+                        onClick={() => chooseUiAccent(color, true)}
+                      />
+                    ))}
+                  </div>
+                  <div className="ui-accent-hex">
+                    <input
+                      type="color"
+                      value={uiAccent.color}
+                      onChange={(event) => chooseUiAccent(event.target.value, true)}
+                      aria-label="Cor personalizada"
+                    />
+                    <input
+                      type="text"
+                      value={uiAccent.color}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (/^#[0-9a-fA-F]{6}$/.test(value)) chooseUiAccent(value, true);
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="settings-toggle-row">
+                  <span>Aplicar cor nos elementos da interface</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={uiAccent.enabled}
+                    className={`settings-switch ${uiAccent.enabled ? 'on' : ''}`}
+                    onClick={() => chooseUiAccent(uiAccent.color, !uiAccent.enabled)}
+                  />
                 </div>
               </div>
             </div>
@@ -759,10 +1141,19 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [chatOpen, setChatOpen] = useState(false);
   const [perfMode, setPerfModeState] = useState<PerfMode>(() => getPerfMode());
   const [messageStyle, setMessageStyleState] = useState<MessageStyle>(() => loadMessageStyle());
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => getTheme());
+  const [density, setDensityState] = useState<Density>(() => getDensity());
+  const [chatFontStep, setChatFontStepState] = useState(() => getChatFontStep());
+  const [messageSpacingStep, setMessageSpacingStepState] = useState(() => getMessageSpacingStep());
+  const [uiZoomStep, setUiZoomStepState] = useState(() => getUiZoomStep());
+  const [uiAccent, setUiAccentState] = useState(() => getUiAccent());
+  const [outputVolume, setOutputVolumeState] = useState(() => loadOutputVolume());
   const [profileColor, setProfileColor] = useState<AccentColor>(session.accentColor);
   const [profileStatus, setProfileStatus] = useState(session.statusText);
   const [profileBio, setProfileBio] = useState(session.bio);
   const [profilePronouns, setProfilePronouns] = useState(session.pronouns);
+  const [profileAvatar, setProfileAvatar] = useState(session.avatarUrl);
+  const [profileBanner, setProfileBanner] = useState(session.bannerUrl);
   const [savingProfile, setSavingProfile] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -776,10 +1167,61 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     setMessageStyleState(style);
   }
 
+  function chooseTheme(mode: ThemeMode) {
+    setTheme(mode);
+    setThemeModeState(mode);
+  }
+
+  function chooseDensity(value: Density) {
+    setDensity(value);
+    setDensityState(value);
+  }
+
+  function chooseChatFontStep(step: number) {
+    setChatFontStep(step);
+    setChatFontStepState(step);
+  }
+
+  function chooseMessageSpacingStep(step: number) {
+    setMessageSpacingStep(step);
+    setMessageSpacingStepState(step);
+  }
+
+  function chooseUiZoomStep(step: number) {
+    setUiZoomStep(step);
+    setUiZoomStepState(step);
+  }
+
+  function chooseUiAccent(color: string, enabled: boolean) {
+    setUiAccent(color, enabled);
+    setUiAccentState({ color, enabled });
+  }
+
+  function chooseOutputVolume(value: number) {
+    localStorage.setItem(OUTPUT_VOLUME_KEY, String(value));
+    setOutputVolumeState(value);
+  }
+
+  function resetProfileDraft() {
+    setProfileColor(session.accentColor);
+    setProfileStatus(session.statusText);
+    setProfileBio(session.bio);
+    setProfilePronouns(session.pronouns);
+    setProfileAvatar(session.avatarUrl);
+    setProfileBanner(session.bannerUrl);
+  }
+
   async function saveProfile() {
     setSavingProfile(true);
     try {
-      const { user } = await api.updateProfile(profileColor, profileStatus, profileBio, profilePronouns);
+      const { user } = await api.updateProfile(
+        profileColor,
+        profileStatus,
+        profileBio,
+        profilePronouns,
+        profileAvatar,
+        profileBanner,
+      );
       onProfileUpdated(user);
     } catch {
       // O usuário pode tentar novamente pelo mesmo popover.
@@ -818,6 +1260,24 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     }
   }, [voice.connectionState]);
 
+  async function startOrStopScreenShare() {
+    if (voice.screenEnabled) {
+      await voice.toggleScreenShare(quality);
+      return;
+    }
+    if (!window.desktop) {
+      // Fora do app empacotado (ex.: navegador comum durante o desenvolvimento)
+      // não existe picker nativo — cai no fluxo antigo com a qualidade já
+      // escolhida em Configurações.
+      await voice.toggleScreenShare(quality);
+      return;
+    }
+    const choice = await window.desktop.chooseShareSource();
+    if (!choice) return;
+    setQuality(choice.quality);
+    await voice.toggleScreenShare(choice.quality, choice.shareAudio);
+  }
+
   async function joinChannel(channel: VoiceChannel) {
     const startViewTransition = (document as ViewTransitionDocument).startViewTransition?.bind(document);
     if (perfMode === 'full' && startViewTransition) {
@@ -850,6 +1310,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         volume={volumes[participant.identity] ?? 100}
         setVolume={(value) => setVolumes((current) => ({ ...current, [participant.identity]: value }))}
         accentColor={participantAccentColor(participant, session.accentColor)}
+        ownAvatarUrl={session.avatarUrl}
+        outputVolume={outputVolume}
       />
     );
   }
@@ -871,6 +1333,20 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         choosePerfMode={choosePerfMode}
         messageStyle={messageStyle}
         setMessageStyle={setMessageStyle}
+        themeMode={themeMode}
+        chooseTheme={chooseTheme}
+        density={density}
+        chooseDensity={chooseDensity}
+        chatFontStep={chatFontStep}
+        chooseChatFontStep={chooseChatFontStep}
+        messageSpacingStep={messageSpacingStep}
+        chooseMessageSpacingStep={chooseMessageSpacingStep}
+        uiZoomStep={uiZoomStep}
+        chooseUiZoomStep={chooseUiZoomStep}
+        uiAccent={uiAccent}
+        chooseUiAccent={chooseUiAccent}
+        outputVolume={outputVolume}
+        chooseOutputVolume={chooseOutputVolume}
         profileColor={profileColor}
         setProfileColor={setProfileColor}
         profileStatus={profileStatus}
@@ -879,8 +1355,13 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         setProfileBio={setProfileBio}
         profilePronouns={profilePronouns}
         setProfilePronouns={setProfilePronouns}
+        profileAvatar={profileAvatar}
+        setProfileAvatar={setProfileAvatar}
+        profileBanner={profileBanner}
+        setProfileBanner={setProfileBanner}
         savingProfile={savingProfile}
         onSaveProfile={() => void saveProfile()}
+        onCancelProfile={resetProfileDraft}
         onSignOut={() => void voice.disconnect().finally(onSignOut)}
         audioInputs={voice.audioInputs}
         audioOutputs={voice.audioOutputs}
@@ -953,7 +1434,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
               <button
                 type="button"
                 className={`icon-button small ${voice.screenEnabled ? 'selected' : ''}`}
-                onClick={() => void voice.toggleScreenShare(quality)}
+                onClick={() => void startOrStopScreenShare()}
                 title={voice.screenEnabled ? 'Parar transmissão' : 'Compartilhar tela'}
                 aria-label={voice.screenEnabled ? 'Parar transmissão' : 'Compartilhar tela'}
               >
@@ -973,7 +1454,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         )}
 
         <footer className="sidebar-user">
-          <Avatar name={session.displayName} accentColor={session.accentColor} />
+          <Avatar name={session.displayName} accentColor={session.accentColor} avatarUrl={session.avatarUrl} />
           <div className="current-user-copy">
             <strong>{session.displayName}</strong>
             <span>{connectionLabel}</span>
@@ -1117,7 +1598,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                 <button
                   className={`voice-action wide ${voice.screenEnabled ? 'sharing' : ''}`}
                   type="button"
-                  onClick={() => void voice.toggleScreenShare(quality)}
+                  onClick={() => void startOrStopScreenShare()}
                   title={voice.screenEnabled ? 'Parar transmissão' : 'Compartilhar tela'}
                 >
                   <ShareIcon />
@@ -1142,21 +1623,33 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                 <CloseIcon size={14} />
               </button>
             </div>
-            <div className={`messages ${messageStyle === 'compact' ? 'compact' : ''}`} aria-live="polite">
+            <div
+              className={`messages ${messageStyle === 'compact' ? 'compact' : ''} ${messageStyle === 'grouped' ? 'grouped' : ''}`}
+              aria-live="polite"
+            >
               {voice.messages.length === 0 ? (
                 <div className="empty-chat"><strong>Nenhuma mensagem</strong><span>As mensagens pertencem ao canal atual.</span></div>
-              ) : voice.messages.map((message) => (
-                <article className="message" key={message.id}>
-                  <Avatar name={message.senderName} compact />
-                  <div>
-                    <header>
-                      <strong>{message.senderName}</strong>
-                      <time>{new Date(message.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time>
-                    </header>
-                    <p>{message.text}</p>
-                  </div>
-                </article>
-              ))}
+              ) : voice.messages.map((message, index) => {
+                const previous = voice.messages[index - 1];
+                const continued =
+                  messageStyle === 'grouped' &&
+                  previous?.senderId === message.senderId &&
+                  message.sentAt - previous.sentAt < 5 * 60 * 1000;
+                const senderAvatar =
+                  message.senderId === session.id ? session.avatarUrl : remoteAvatarCache.get(message.senderId);
+                return (
+                  <article className={`message ${continued ? 'continued' : ''}`} key={message.id}>
+                    <Avatar name={message.senderName} avatarUrl={senderAvatar} compact />
+                    <div>
+                      <header>
+                        <strong>{message.senderName}</strong>
+                        <time>{new Date(message.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time>
+                      </header>
+                      <p>{message.text}</p>
+                    </div>
+                  </article>
+                );
+              })}
               <div ref={chatEndRef} />
             </div>
             <form className="chat-form" onSubmit={submitChat}>

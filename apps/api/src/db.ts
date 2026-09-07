@@ -24,6 +24,8 @@ const existingColumns = new Set(
 for (const [column, definition] of [
   ['bio', "TEXT NOT NULL DEFAULT ''"],
   ['pronouns', "TEXT NOT NULL DEFAULT ''"],
+  ['avatar_data_url', "TEXT NOT NULL DEFAULT ''"],
+  ['banner_data_url', "TEXT NOT NULL DEFAULT ''"],
 ] as const) {
   if (!existingColumns.has(column)) {
     db.exec(`ALTER TABLE users ADD COLUMN ${column} ${definition}`);

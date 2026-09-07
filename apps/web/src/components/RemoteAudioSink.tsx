@@ -4,11 +4,12 @@ import { RemoteAudioTrack, RemoteParticipant, Track } from 'livekit-client';
 interface RemoteAudioSinkProps {
   participant: RemoteParticipant;
   volume: number;
+  outputVolume: number;
   deafened: boolean;
   trackVersion: string;
 }
 
-export function RemoteAudioSink({ participant, volume, deafened, trackVersion }: RemoteAudioSinkProps) {
+export function RemoteAudioSink({ participant, volume, outputVolume, deafened, trackVersion }: RemoteAudioSinkProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export function RemoteAudioSink({ participant, volume, deafened, trackVersion }:
       const element = track.attach();
       element.autoplay = true;
       element.muted = deafened;
-      element.volume = volume / 100;
+      element.volume = (volume / 100) * (outputVolume / 100);
       container.appendChild(element);
       return { element, track };
     });
@@ -39,7 +40,7 @@ export function RemoteAudioSink({ participant, volume, deafened, trackVersion }:
         element.remove();
       }
     };
-  }, [participant, volume, deafened, trackVersion]);
+  }, [participant, volume, outputVolume, deafened, trackVersion]);
 
   return <div ref={containerRef} className="audio-sink" aria-hidden="true" />;
 }

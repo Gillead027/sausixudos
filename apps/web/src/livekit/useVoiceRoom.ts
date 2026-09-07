@@ -369,18 +369,14 @@ export function useVoiceRoom() {
   }, [room, syncRoom]);
 
   const toggleScreenShare = useCallback(
-    async (quality: ShareQuality) => {
+    async (quality: ShareQuality, shareAudio = true) => {
       setError('');
       try {
         if (room.localParticipant.isScreenShareEnabled) {
           await room.localParticipant.setScreenShareEnabled(false);
         } else {
           const settings = shareSettings[quality];
-          await room.localParticipant.setScreenShareEnabled(
-            true,
-            settings.capture,
-            settings.publish,
-          );
+          await room.localParticipant.setScreenShareEnabled(true, { ...settings.capture, audio: shareAudio }, settings.publish);
         }
         syncRoom();
       } catch (mediaError) {

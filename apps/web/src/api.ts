@@ -42,11 +42,19 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   deleteSession: () => request<void>('/api/session', { method: 'DELETE' }),
-  updateProfile: (accentColor: AccentColor, statusText: string, bio: string, pronouns: string) =>
+  updateProfile: (
+    accentColor: AccentColor,
+    statusText: string,
+    bio: string,
+    pronouns: string,
+    avatarUrl: string,
+    bannerUrl: string,
+  ) =>
     request<{ user: UserSession }>('/api/profile', {
       method: 'PATCH',
-      body: JSON.stringify({ accentColor, statusText, bio, pronouns }),
+      body: JSON.stringify({ accentColor, statusText, bio, pronouns, avatarUrl, bannerUrl }),
     }),
+  getUserAvatar: (userId: string) => request<{ avatarUrl: string }>(`/api/users/${userId}/avatar`),
   getConfig: () => request<PublicConfig>('/api/config'),
   getRooms: () =>
     request<{ rooms: RoomSummary[]; livekitAvailable: boolean }>('/api/rooms'),

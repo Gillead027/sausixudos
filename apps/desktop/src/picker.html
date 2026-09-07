@@ -25,6 +25,29 @@
     <main id="source-list">
       <p id="status">Carregando fontes…</p>
     </main>
+    <div class="options">
+      <label>
+        <span>Resolução</span>
+        <select id="quality-resolution">
+          <option value="720" selected>720p</option>
+          <option value="1080">1080p</option>
+        </select>
+      </label>
+      <label>
+        <span>FPS</span>
+        <select id="quality-fps">
+          <option value="30">30 FPS</option>
+          <option value="60" selected>60 FPS</option>
+        </select>
+      </label>
+      <label class="options-toggle">
+        <span>
+          <strong>Compartilhar áudio</strong>
+          <small>Compartilha o áudio do aplicativo/guia</small>
+        </span>
+        <input id="share-audio" type="checkbox" checked />
+      </label>
+    </div>
     <footer>
       <button id="cancel" type="button" class="btn-secondary">Cancelar</button>
       <button id="confirm" type="button" class="btn-primary" disabled>Transmitir</button>

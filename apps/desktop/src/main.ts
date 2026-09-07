@@ -16,14 +16,32 @@ interface DesktopConfig {
   appUrl: string;
 }
 
+type PickerShareQuality = '720p30' | '720p60' | '1080p60';
+
+interface CaptureChoice {
+  source: DesktopCapturerSource;
+  quality: PickerShareQuality;
+  shareAudio: boolean;
+}
+
+interface ArmedCapture extends CaptureChoice {
+  armedAt: number;
+}
+
+const PRE_ARM_TTL_MS = 15_000;
+
 interface PendingCapture {
   window: BrowserWindow;
   sources: DesktopCapturerSource[];
-  resolve: (source: DesktopCapturerSource | null) => void;
+  resolve: (choice: CaptureChoice | null) => void;
 }
 
 let mainWindow: BrowserWindow | null = null;
 let pendingCapture: PendingCapture | null = null;
+// Fonte já escolhida pelo usuário via o botão "Compartilhar tela" do app (fluxo
+// proativo, ver share-picker:open) — quando presente, o handler de getDisplayMedia
+// a usa direto em vez de abrir o picker de novo reagindo à chamada do navegador.
+let preArmedCapture: ArmedCapture | null = null;
 
 // Sem isso, o Electron deriva o nome do app do "name" do package.json
 // (@sausixudos/desktop), e usa isso pra montar o caminho de userData —
@@ -52,12 +70,12 @@ function isAllowedAppUrl(candidate: string, appOrigin: string): boolean {
   }
 }
 
-function finishCapture(source: DesktopCapturerSource | null): void {
+function finishCapture(choice: CaptureChoice | null): void {
   const capture = pendingCapture;
   if (!capture) return;
   pendingCapture = null;
   if (!capture.window.isDestroyed()) capture.window.close();
-  capture.resolve(source);
+  capture.resolve(choice);
 }
 
 function installPickerIpc(): void {
@@ -72,16 +90,18 @@ function installPickerIpc(): void {
     }));
   });
 
-  ipcMain.handle('capture-picker:choose', (event, sourceId: unknown) => {
+  ipcMain.handle('capture-picker:choose', (event, sourceId: unknown, quality: unknown, shareAudio: unknown) => {
     const capture = pendingCapture;
     if (
       !capture ||
       event.sender.id !== capture.window.webContents.id ||
-      typeof sourceId !== 'string'
+      typeof sourceId !== 'string' ||
+      typeof quality !== 'string'
     ) {
       return;
     }
-    finishCapture(capture.sources.find((source) => source.id === sourceId) ?? null);
+    const source = capture.sources.find((candidate) => candidate.id === sourceId);
+    finishCapture(source ? { source, quality: quality as PickerShareQuality, shareAudio: Boolean(shareAudio) } : null);
   });
 
   ipcMain.handle('capture-picker:cancel', (event) => {
@@ -89,9 +109,21 @@ function installPickerIpc(): void {
       finishCapture(null);
     }
   });
+
+  ipcMain.handle('share-picker:open', async () => {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 320, height: 180 },
+      fetchWindowIcons: false,
+    });
+    const choice = await chooseCaptureSource(sources);
+    if (!choice) return null;
+    preArmedCapture = { ...choice, armedAt: Date.now() };
+    return { quality: choice.quality, shareAudio: choice.shareAudio };
+  });
 }
 
-async function chooseCaptureSource(sources: DesktopCapturerSource[]): Promise<DesktopCapturerSource | null> {
+async function chooseCaptureSource(sources: DesktopCapturerSource[]): Promise<CaptureChoice | null> {
   if (pendingCapture) finishCapture(null);
 
   return new Promise((resolve) => {
@@ -139,10 +171,16 @@ function installSessionSecurity(appUrl: URL): void {
     : ' https: wss: http://localhost:* ws://localhost:*';
   const scriptSource = app.isPackaged ? "script-src 'self'" : "script-src 'self' 'unsafe-inline'";
   const styleSource = app.isPackaged ? "style-src 'self'" : "style-src 'self' 'unsafe-inline'";
+  // A cor de destaque personalizada (hex livre) na tela de Aparência precisa mutar
+  // a custom property --accent via element.style em runtime. style-src sozinho
+  // bloquearia isso no build empacotado; liberamos só o atributo style="" (não
+  // <style>/style-src geral) para essa única finalidade.
+  const styleAttrSource = "style-src-attr 'unsafe-inline'";
   const contentSecurityPolicy = [
     "default-src 'self'",
     scriptSource,
     styleSource,
+    styleAttrSource,
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     "media-src 'self' blob: mediastream:",
@@ -190,23 +228,30 @@ function installSessionSecurity(appUrl: URL): void {
 
     let callbackUsed = false;
     try {
-      const sources = await desktopCapturer.getSources({
-        types: ['screen', 'window'],
-        thumbnailSize: { width: 320, height: 180 },
-        fetchWindowIcons: false,
-      });
-      const source = await chooseCaptureSource(sources);
-      if (!source) {
+      let choice: CaptureChoice | null;
+      if (preArmedCapture && Date.now() - preArmedCapture.armedAt < PRE_ARM_TTL_MS) {
+        choice = preArmedCapture;
+        preArmedCapture = null;
+      } else {
+        preArmedCapture = null;
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 320, height: 180 },
+          fetchWindowIcons: false,
+        });
+        choice = await chooseCaptureSource(sources);
+      }
+      if (!choice) {
         callbackUsed = true;
         callback({});
         return;
       }
 
       callbackUsed = true;
-      if (request.audioRequested && process.platform === 'win32') {
-        callback({ video: source, audio: 'loopback' });
+      if (request.audioRequested && choice.shareAudio && process.platform === 'win32') {
+        callback({ video: choice.source, audio: 'loopback' });
       } else {
-        callback({ video: source });
+        callback({ video: choice.source });
       }
     } catch (error) {
       console.error('Falha ao selecionar fonte de captura:', error);

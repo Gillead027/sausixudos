@@ -1,10 +1,10 @@
-import type { CaptureSourceView } from './picker-preload';
+import type { CaptureSourceView, PickerShareQuality } from './picker-preload';
 
 declare global {
   interface Window {
     capturePicker: {
       listSources: () => Promise<CaptureSourceView[]>;
-      chooseSource: (sourceId: string) => Promise<void>;
+      chooseSource: (sourceId: string, quality: PickerShareQuality, shareAudio: boolean) => Promise<void>;
       cancel: () => Promise<void>;
     };
   }
@@ -15,6 +15,9 @@ const status = document.querySelector<HTMLParagraphElement>('#status');
 const cancelButton = document.querySelector<HTMLButtonElement>('#cancel');
 const confirmButton = document.querySelector<HTMLButtonElement>('#confirm');
 const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
+const resolutionSelect = document.querySelector<HTMLSelectElement>('#quality-resolution');
+const fpsSelect = document.querySelector<HTMLSelectElement>('#quality-fps');
+const shareAudioCheckbox = document.querySelector<HTMLInputElement>('#share-audio');
 
 let allSources: CaptureSourceView[] = [];
 let activeKind: CaptureSourceView['kind'] = 'window';
@@ -67,6 +70,13 @@ async function loadSources(): Promise<void> {
   }
 }
 
+function currentQuality(): PickerShareQuality {
+  const resolution = resolutionSelect?.value ?? '720';
+  const fps = fpsSelect?.value ?? '60';
+  if (resolution === '1080') return '1080p60';
+  return fps === '30' ? '720p30' : '720p60';
+}
+
 for (const tabButton of tabButtons) {
   tabButton.addEventListener('click', () => {
     activeKind = (tabButton.dataset.kind as CaptureSourceView['kind']) ?? 'window';
@@ -75,11 +85,19 @@ for (const tabButton of tabButtons) {
   });
 }
 
+resolutionSelect?.addEventListener('change', () => {
+  // 1080p só existe a 60 FPS no app — trava o seletor de FPS quando essa resolução é escolhida.
+  if (!fpsSelect) return;
+  const is1080 = resolutionSelect.value === '1080';
+  fpsSelect.disabled = is1080;
+  if (is1080) fpsSelect.value = '60';
+});
+
 cancelButton?.addEventListener('click', () => void window.capturePicker.cancel());
 confirmButton?.addEventListener('click', () => {
   if (!selectedId) return;
   if (confirmButton) confirmButton.disabled = true;
-  void window.capturePicker.chooseSource(selectedId);
+  void window.capturePicker.chooseSource(selectedId, currentQuality(), shareAudioCheckbox?.checked ?? true);
 });
 
 void loadSources();
