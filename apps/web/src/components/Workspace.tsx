@@ -151,29 +151,48 @@ function Avatar({
 
 const remoteAvatarCache = new Map<string, string>();
 
-function useRemoteAvatar(participant: LocalParticipant | RemoteParticipant, ownAvatarUrl: string): string | undefined {
+function useAvatarByIdentity(identity: string, isOwn: boolean, ownAvatarUrl: string): string | undefined {
   const [, forceRender] = useState(0);
   useEffect(() => {
-    if (participant instanceof LocalParticipant) return;
-    if (remoteAvatarCache.has(participant.identity)) return;
+    if (isOwn) return;
+    if (remoteAvatarCache.has(identity)) return;
     let active = true;
     void api
-      .getUserAvatar(participant.identity)
+      .getUserAvatar(identity)
       .then(({ avatarUrl }) => {
         if (!active) return;
-        remoteAvatarCache.set(participant.identity, avatarUrl);
+        remoteAvatarCache.set(identity, avatarUrl);
         forceRender((value) => value + 1);
       })
       .catch(() => {
-        if (active) remoteAvatarCache.set(participant.identity, '');
+        if (active) remoteAvatarCache.set(identity, '');
       });
     return () => {
       active = false;
     };
-  }, [participant]);
+  }, [identity, isOwn]);
 
-  if (participant instanceof LocalParticipant) return ownAvatarUrl || undefined;
-  return remoteAvatarCache.get(participant.identity) || undefined;
+  if (isOwn) return ownAvatarUrl || undefined;
+  return remoteAvatarCache.get(identity) || undefined;
+}
+
+function useRemoteAvatar(participant: LocalParticipant | RemoteParticipant, ownAvatarUrl: string): string | undefined {
+  return useAvatarByIdentity(participant.identity, participant instanceof LocalParticipant, ownAvatarUrl);
+}
+
+function ChannelUserAvatar({
+  identity,
+  name,
+  ownIdentity,
+  ownAvatarUrl,
+}: {
+  identity: string;
+  name: string;
+  ownIdentity: string;
+  ownAvatarUrl: string;
+}) {
+  const avatarUrl = useAvatarByIdentity(identity, identity === ownIdentity, ownAvatarUrl);
+  return <Avatar name={name} avatarUrl={avatarUrl} compact />;
 }
 
 function participantAccentColor(
@@ -268,6 +287,8 @@ function ChannelButton({
   onClick,
   chatOpen,
   onToggleChat,
+  ownIdentity,
+  ownAvatarUrl,
 }: {
   channel: VoiceChannel;
   summary: RoomSummary | undefined;
@@ -276,6 +297,8 @@ function ChannelButton({
   onClick: () => void;
   chatOpen: boolean;
   onToggleChat: () => void;
+  ownIdentity: string;
+  ownAvatarUrl: string;
 }) {
   return (
     <div className="channel-block">
@@ -309,7 +332,12 @@ function ChannelButton({
       </div>
       {summary?.participants.map((participant) => (
         <div className="channel-user" key={participant.identity}>
-          <Avatar name={participant.name} compact />
+          <ChannelUserAvatar
+            identity={participant.identity}
+            name={participant.name}
+            ownIdentity={ownIdentity}
+            ownAvatarUrl={ownAvatarUrl}
+          />
           <span>{participant.name}</span>
         </div>
       ))}
@@ -323,6 +351,7 @@ function ParticipantRow({
   deafened,
   volume,
   setVolume,
+  streamVolume,
   accentColor,
   ownAvatarUrl,
   outputVolume,
@@ -332,6 +361,7 @@ function ParticipantRow({
   deafened: boolean;
   volume: number;
   setVolume: (value: number) => void;
+  streamVolume: number;
   accentColor?: AccentColor | undefined;
   ownAvatarUrl: string;
   outputVolume: number;
@@ -374,6 +404,7 @@ function ParticipantRow({
         <RemoteAudioSink
           participant={participant}
           volume={volume}
+          streamVolume={streamVolume}
           outputVolume={outputVolume}
           deafened={deafened}
           trackVersion={trackVersion}
@@ -1137,6 +1168,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [quality, setQuality] = useState<ShareQuality>('720p60');
   const [volumes, setVolumes] = useState<Record<string, number>>({});
+  const [streamVolumes, setStreamVolumes] = useState<Record<string, number>>({});
   const [chatText, setChatText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -1317,6 +1349,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         deafened={voice.deafened}
         volume={volumes[participant.identity] ?? 100}
         setVolume={(value) => setVolumes((current) => ({ ...current, [participant.identity]: value }))}
+        streamVolume={streamVolumes[participant.identity] ?? 100}
         accentColor={participantAccentColor(participant, session.accentColor)}
         ownAvatarUrl={session.avatarUrl}
         outputVolume={outputVolume}
@@ -1416,6 +1449,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
               onClick={() => void joinChannel(channel)}
               chatOpen={chatOpen}
               onToggleChat={() => setChatOpen((open) => !open)}
+              ownIdentity={session.id}
+              ownAvatarUrl={session.avatarUrl}
             />
           ))}
         </nav>
@@ -1555,7 +1590,11 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                 <RoomSkeleton />
               ) : voice.connected ? (
                 voice.screenTracks.length > 0 ? (
-                  <ScreenStage screens={voice.screenTracks} />
+                  <ScreenStage
+                    screens={voice.screenTracks}
+                    streamVolumes={streamVolumes}
+                    setStreamVolume={(identity, value) => setStreamVolumes((current) => ({ ...current, [identity]: value }))}
+                  />
                 ) : (
                   <div className="voice-idle-stage">
                     <VoiceIcon size={26} />

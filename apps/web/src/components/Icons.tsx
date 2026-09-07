@@ -74,6 +74,10 @@ export function UserIcon(props: IconProps) {
   return <Icon {...props}><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" /></Icon>;
 }
 
+export function SpeakerIcon(props: IconProps) {
+  return <Icon {...props}><path d="M4 9v6h4l5 4V5L8 9H4Z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /></Icon>;
+}
+
 export function SearchIcon(props: IconProps) {
   return <Icon {...props}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></Icon>;
 }
