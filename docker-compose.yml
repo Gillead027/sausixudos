@@ -9,6 +9,8 @@ services:
     depends_on:
       livekit:
         condition: service_healthy
+      music-bot:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -74,6 +76,12 @@ services:
     volumes:
       - ./secrets/youtube-cookies.txt:/app/cookies-master.txt:ro
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" ]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s
 
   livekit:
     image: livekit/livekit-server:v1.13.5
