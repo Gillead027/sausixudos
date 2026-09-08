@@ -48,6 +48,7 @@ class FakeVoiceParticipant implements MusicVoiceParticipant {
   connected = false;
   connectCalls = 0;
   startCalls = 0;
+  localStartCalls = 0;
   stopCalls = 0;
   disconnectCalls = 0;
   activePlaybacks = 0;
@@ -67,6 +68,20 @@ class FakeVoiceParticipant implements MusicVoiceParticipant {
     callbacks: PlaybackCallbacks,
   ): Promise<MusicPlaybackHandle> {
     this.startCalls += 1;
+    if (this.startError) throw this.startError;
+    this.activePlaybacks += 1;
+    this.maxActivePlaybacks = Math.max(this.maxActivePlaybacks, this.activePlaybacks);
+    this.playbackCallbacks = callbacks;
+    this.playback = new FakePlayback(initialVolume);
+    return this.playback;
+  }
+
+  async startLocalFileAudio(
+    _filePath: string,
+    initialVolume: number,
+    callbacks: PlaybackCallbacks,
+  ): Promise<MusicPlaybackHandle> {
+    this.localStartCalls += 1;
     if (this.startError) throw this.startError;
     this.activePlaybacks += 1;
     this.maxActivePlaybacks = Math.max(this.maxActivePlaybacks, this.activePlaybacks);
@@ -367,4 +382,23 @@ describe('MusicSession player stateful', () => {
     assert.equal(session?.currentTrack, null);
     assert.equal(session?.queue.length, 0);
   });
+
+  it('play-local usa a fonte FFmpeg sem alterar o fluxo da sessão', async () => {
+    const harness = createHarness();
+    const result = await harness.manager.execute(command('/play-local'));
+    const session = harness.manager.getSession('geral');
+    const participant = harness.participants[0];
+    assert.ok(session && participant);
+    assert.match(result.message, /FFmpeg Local Test/);
+    assert.equal(session.currentTrack?.source, 'LOCAL_FFMPEG_FILE');
+    assert.equal(participant.localStartCalls, 1);
+    assert.equal(participant.startCalls, 0);
+    assert.equal(session.state, 'PLAYING');
+
+    await harness.manager.execute(command('/volume 25'));
+    assert.equal(participant.playback?.volume, 25);
+    await harness.manager.execute(command('/stop'));
+    assert.equal(session.state, 'STOPPED');
+  });
+
 });

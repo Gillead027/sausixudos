@@ -11,6 +11,7 @@ RUN npm run build -w @sausixudos/shared && npm run build -w @sausixudos/music-bo
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY apps/music-bot/package.json apps/music-bot/package.json

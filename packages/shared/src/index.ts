@@ -142,6 +142,7 @@ export function parseParticipantMetadata(value: string | undefined): Participant
 
 export const MUSIC_COMMAND_ALIASES = {
   'play-file': 'play-file',
+  'play-local': 'play-local',
   pause: 'pause',
   resume: 'resume',
   skip: 'skip',
@@ -159,6 +160,7 @@ export type MusicCommandPrefix = '/' | '!';
 
 export interface MusicCommandArgsByName {
   'play-file': Record<never, never>;
+  'play-local': Record<never, never>;
   pause: Record<never, never>;
   resume: Record<never, never>;
   skip: Record<never, never>;

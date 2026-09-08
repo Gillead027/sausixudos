@@ -7,7 +7,8 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
-    "test": "node --import tsx --test src/commandParsing.test.ts src/musicSession.test.ts src/programmaticAudioSource.test.ts",
+    "test": "node --import tsx --test src/commandParsing.test.ts src/musicSession.test.ts src/programmaticAudioSource.test.ts src/ffmpegAudioSource.test.ts",
+    "test:ffmpeg": "node --import tsx scripts/ffmpeg-local.ts",
     "test:integration": "node --import tsx scripts/livekit-integration.ts",
     "start": "node dist/index.js"
   },

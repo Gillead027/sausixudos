@@ -10,6 +10,10 @@ import type {
   MusicVoiceParticipant,
   VoiceLifecycleCallbacks,
 } from './botVoiceParticipant.js';
+import {
+  DIAGNOSTIC_AUDIO_DURATION_MS,
+  ensureDiagnosticAudioFile,
+} from './ffmpegAudioSource.js';
 import { TEST_AUDIO_DURATION_MS } from './programmaticAudioSource.js';
 
 export type MusicSessionState =
@@ -20,14 +24,18 @@ export type MusicSessionState =
   | 'STOPPED'
   | 'ERROR';
 
-export interface MusicTrack {
+interface MusicTrackBase {
   id: string;
   title: string;
-  source: 'PROGRAMMATIC_TEST_TONE';
   durationMs: number;
   requestedBy: AuthenticatedUserIdentity;
   createdAt: number;
 }
+
+export type MusicTrack = MusicTrackBase & (
+  | { source: 'PROGRAMMATIC_TEST_TONE' }
+  | { source: 'LOCAL_FFMPEG_FILE'; filePath: string }
+);
 
 interface MusicSessionOptions {
   roomName: string;
@@ -84,6 +92,8 @@ export class MusicSession {
       switch (request.command) {
         case 'play-file':
           return this.playFileCommand(request.requestedBy);
+        case 'play-local':
+          return this.playLocalCommand(request.requestedBy);
         case 'pause':
           return this.pauseCommand();
         case 'resume':
@@ -149,8 +159,28 @@ export class MusicSession {
     };
   }
 
-  private async playFileCommand(requester: AuthenticatedUserIdentity): Promise<MusicCommandResponse> {
-    const track = this.createTrack(requester);
+  private createLocalTrack(requester: AuthenticatedUserIdentity): MusicTrack {
+    this.trackSequence += 1;
+    return {
+      id: randomUUID(),
+      title: `FFmpeg Local Test #${this.trackSequence}`,
+      source: 'LOCAL_FFMPEG_FILE',
+      filePath: ensureDiagnosticAudioFile(),
+      durationMs: DIAGNOSTIC_AUDIO_DURATION_MS,
+      requestedBy: { ...requester },
+      createdAt: Date.now(),
+    };
+  }
+
+  private playFileCommand(requester: AuthenticatedUserIdentity): Promise<MusicCommandResponse> {
+    return this.enqueueOrStart(this.createTrack(requester));
+  }
+
+  private playLocalCommand(requester: AuthenticatedUserIdentity): Promise<MusicCommandResponse> {
+    return this.enqueueOrStart(this.createLocalTrack(requester));
+  }
+
+  private async enqueueOrStart(track: MusicTrack): Promise<MusicCommandResponse> {
     if (this.currentTrack) {
       this.upcomingTracks.push(track);
       this.options.log('track queued', {
@@ -177,10 +207,13 @@ export class MusicSession {
 
     try {
       await this.botParticipant.connect();
-      this.playback = await this.botParticipant.startTestAudio(this.volume, {
+      const callbacks = {
         onFinished: () => void this.finishPlayback(generation),
-        onError: (error) => void this.failPlayback(generation, error),
-      });
+        onError: (error: Error) => void this.failPlayback(generation, error),
+      };
+      this.playback = track.source === 'LOCAL_FFMPEG_FILE'
+        ? await this.botParticipant.startLocalFileAudio(track.filePath, this.volume, callbacks)
+        : await this.botParticipant.startTestAudio(this.volume, callbacks);
       this.state = 'PLAYING';
       this.options.log('playback started', {
         room: this.roomName,
@@ -414,7 +447,9 @@ export class MusicSessionManager {
       user: request.requestedBy.id,
     });
     let session = this.sessions.get(request.channelId);
-    if (!session && request.command !== 'play-file') return this.noSessionResponse(request.command);
+    if (!session && request.command !== 'play-file' && request.command !== 'play-local') {
+      return this.noSessionResponse(request.command);
+    }
 
     if (!session) {
       const context = { roomName: request.channelId, channelId: request.channelId };
@@ -440,7 +475,7 @@ export class MusicSessionManager {
     if (command === 'queue') return reply('Nada tocando no momento. Fila vazia.');
     if (command === 'nowplaying') return reply('Nada tocando no momento.');
     if (command === 'leave') return reply('SausiMusic não está neste canal.');
-    return reply('Não há uma sessão musical ativa neste canal. Use /play-file primeiro.');
+    return reply('Não há uma sessão musical ativa neste canal. Use /play-file ou /play-local primeiro.');
   }
 
   async cleanup(channelId: string, reason: string): Promise<void> {

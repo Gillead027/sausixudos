@@ -137,6 +137,7 @@ const manager = new MusicSessionManager(
       livekitUrl: config.LIVEKIT_INTERNAL_URL,
       apiKey: config.LIVEKIT_API_KEY,
       apiSecret: config.LIVEKIT_API_SECRET,
+      ffmpegPath: config.FFMPEG_PATH,
       log: (event, values) => console.log(`[INTEGRATION] ${event}`, values),
       lifecycle,
     }),
@@ -222,11 +223,46 @@ try {
   assert.equal(manager.getSession(roomName)?.state, 'STOPPED');
   assert.equal(manager.getSession(roomName)?.currentTrack, null);
 
-  const tracksBeforeReplay = monitors.map(({ subscribedTracks }) => subscribedTracks);
-  await manager.execute(command('/play-file'));
+  const tracksBeforeLocal = monitors.map(({ subscribedTracks }) => subscribedTracks);
+  const framesBeforeLocal = monitors.map(({ nonSilentFrames }) => nonSilentFrames);
+  assert.match((await manager.execute(command('/play-local'))).message, /FFmpeg Local Test/);
+  assert.equal(manager.getSession(roomName)?.currentTrack?.source, 'LOCAL_FFMPEG_FILE');
   await waitForCondition(
-    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeReplay[index] ?? 0)),
-    'novo play após stop',
+    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeLocal[index] ?? 0)),
+    'track FFmpeg local',
+  );
+  await waitForCondition(
+    () => monitors.every((monitor, index) => monitor.nonSilentFrames >= (framesBeforeLocal[index] ?? 0) + 5),
+    'áudio FFmpeg nos dois clientes',
+  );
+
+  assert.match((await manager.execute(command('/pause'))).message, /pausada/i);
+  const localPausedPosition = manager.getSession(roomName)?.positionMs ?? 0;
+  await delay(250);
+  assert.equal(manager.getSession(roomName)?.positionMs, localPausedPosition);
+  assert.match((await manager.execute(command('/resume'))).message, /retomada/i);
+  await waitForCondition(
+    () => (manager.getSession(roomName)?.positionMs ?? 0) > localPausedPosition,
+    'posição FFmpeg avançar após resume',
+  );
+  await manager.execute(command('/volume 25'));
+  assert.equal(manager.getSession(roomName)?.volume, 25);
+
+  await manager.execute(command('/play-file'));
+  assert.equal(manager.getSession(roomName)?.queue.length, 1);
+  const tracksBeforeLocalSkip = monitors.map(({ subscribedTracks }) => subscribedTracks);
+  assert.match((await manager.execute(command('/skip'))).message, /Test Tone/);
+  await waitForCondition(
+    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeLocalSkip[index] ?? 0)),
+    'próxima track após skip do FFmpeg',
+  );
+  await manager.execute(command('/stop'));
+
+  const tracksBeforeLocalLeave = monitors.map(({ subscribedTracks }) => subscribedTracks);
+  await manager.execute(command('/play-local'));
+  await waitForCondition(
+    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeLocalLeave[index] ?? 0)),
+    'novo FFmpeg após stop',
   );
   assert.match((await manager.execute(command('/leave'))).message, /saiu do canal/);
   await waitForCondition(

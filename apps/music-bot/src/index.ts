@@ -19,6 +19,7 @@ const sessionManager = new MusicSessionManager(
       livekitUrl: config.LIVEKIT_INTERNAL_URL,
       apiKey: config.LIVEKIT_API_KEY,
       apiSecret: config.LIVEKIT_API_SECRET,
+      ffmpegPath: config.FFMPEG_PATH,
       log,
       lifecycle,
     }),

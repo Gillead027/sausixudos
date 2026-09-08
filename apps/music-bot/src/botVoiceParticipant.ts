@@ -20,6 +20,7 @@ import {
   type BotParticipantMetadata,
   type ChatMessage,
 } from '@sausixudos/shared';
+import { FfmpegAudioSource } from './ffmpegAudioSource.js';
 import {
   ProgrammaticAudioSource,
   TEST_AUDIO_CHANNELS,
@@ -47,6 +48,11 @@ export interface MusicVoiceParticipant {
     initialVolume: number,
     callbacks: PlaybackCallbacks,
   ) => Promise<MusicPlaybackHandle>;
+  startLocalFileAudio: (
+    filePath: string,
+    initialVolume: number,
+    callbacks: PlaybackCallbacks,
+  ) => Promise<MusicPlaybackHandle>;
   stopAudio: () => Promise<void>;
   sendMessage: (text: string) => Promise<void>;
   disconnect: () => Promise<void>;
@@ -59,7 +65,7 @@ export interface VoiceLifecycleCallbacks {
 
 interface ActiveAudio {
   controller: AbortController;
-  fixture: ProgrammaticAudioSource;
+  fixture: ProgrammaticAudioSource | FfmpegAudioSource;
   source: AudioSource;
   track: LocalAudioTrack;
   publication: LocalTrackPublication;
@@ -72,6 +78,7 @@ interface BotVoiceParticipantOptions {
   livekitUrl: string;
   apiKey: string;
   apiSecret: string;
+  ffmpegPath: string;
   log: MusicLog;
   lifecycle: VoiceLifecycleCallbacks;
 }
@@ -148,6 +155,24 @@ export class BotVoiceParticipant implements MusicVoiceParticipant {
     initialVolume: number,
     callbacks: PlaybackCallbacks,
   ): Promise<MusicPlaybackHandle> {
+    return this.startAudioFixture(new ProgrammaticAudioSource(initialVolume), callbacks);
+  }
+
+  async startLocalFileAudio(
+    filePath: string,
+    initialVolume: number,
+    callbacks: PlaybackCallbacks,
+  ): Promise<MusicPlaybackHandle> {
+    return this.startAudioFixture(
+      new FfmpegAudioSource(filePath, this.options.ffmpegPath, initialVolume),
+      callbacks,
+    );
+  }
+
+  private async startAudioFixture(
+    fixture: ProgrammaticAudioSource | FfmpegAudioSource,
+    callbacks: PlaybackCallbacks,
+  ): Promise<MusicPlaybackHandle> {
     if (!this.room.localParticipant) throw new Error('SausiMusic não está conectado à sala.');
     if (this.activeAudio) throw new Error('SausiMusic já possui uma track ativa nesta sala.');
 
@@ -158,7 +183,6 @@ export class BotVoiceParticipant implements MusicVoiceParticipant {
     publishOptions.dtx = false;
     publishOptions.red = true;
     const publication = await this.room.localParticipant.publishTrack(track, publishOptions);
-    const fixture = new ProgrammaticAudioSource(initialVolume);
     const active: ActiveAudio = {
       controller: new AbortController(),
       fixture,

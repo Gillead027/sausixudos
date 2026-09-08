@@ -6,6 +6,8 @@ describe('parseMusicCommand', () => {
   for (const [input, name] of [
     ['/play-file', 'play-file'],
     ['!play-file', 'play-file'],
+    ['/play-local', 'play-local'],
+    ['!play-local', 'play-local'],
     ['/pause', 'pause'],
     ['!pause', 'pause'],
     ['/resume', 'resume'],
