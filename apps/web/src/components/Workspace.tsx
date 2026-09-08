@@ -15,7 +15,6 @@ import {
   ConnectionState,
   LocalParticipant,
   RemoteParticipant,
-  Track,
   type TrackPublication,
 } from 'livekit-client';
 import { AVATAR_DATA_URL_MAX_LENGTH, BANNER_DATA_URL_MAX_LENGTH } from '@sausixudos/shared';
@@ -399,7 +398,6 @@ function ParticipantRow({
   const metadata = parseParticipantMetadata(participant.metadata);
   const isBot = metadata?.participantType === 'BOT';
   const avatarUrl = useRemoteAvatar(participant, ownAvatarUrl);
-  const isSharingScreen = Boolean(participant.getTrackPublication(Track.Source.ScreenShare));
 
   return (
     <div className="participant-row">
@@ -415,9 +413,11 @@ function ParticipantRow({
           <strong>
             {name}{local ? ' (você)' : ''}
             {isBot && <span className="bot-badge">BOT</span>}
-            {isSharingScreen && <span className="live-badge" title="Compartilhando a tela">AO VIVO</span>}
           </strong>
-          <span>{isBot ? 'Ocioso' : 'Conectado'}</span>
+          {/* Sem status de conexão/mudo/transmissão aqui — isso mora na lista
+              de canais de voz. Esta segunda linha é reservada pra atividade
+              de verdade (jogo, Spotify) quando esse recurso existir. */}
+          {isBot && <span>Ocioso</span>}
         </div>
       </button>
       {!local && (
