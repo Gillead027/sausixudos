@@ -376,8 +376,10 @@ button:disabled { cursor: default; opacity: .45; }
 .error-banner button { color: #dda3a6; cursor: pointer; text-decoration: underline; }
 .audio-permission { height: 34px; flex: 0 0 34px; border-bottom: 1px solid #425447; color: #dce8df; background: #233027; cursor: pointer; font-size: 11px; animation: slide-up 320ms cubic-bezier(.16, 1, .3, 1); }
 .audio-permission:hover { background: #29382e; }
-.share-audio-notice { display: flex; align-items: center; justify-content: center; text-align: center; padding: 0 14px; cursor: default; }
+.share-audio-notice { display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 0 14px; cursor: default; height: auto; min-height: 34px; flex-basis: auto; }
 .share-audio-notice:hover { background: #233027; }
+.share-audio-notice-toggle { flex: 0 0 auto; border: 1px solid #4d6355; background: #2c3b31; color: #eafff0; border-radius: 4px; padding: 3px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.share-audio-notice-toggle:hover { background: #37493d; }
 .room-content { min-width: 0; min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 240px; }
 .room-content.with-chat { grid-template-columns: minmax(0, 1fr) 260px 240px; }
 .stage-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--main); }
@@ -583,6 +585,9 @@ button:disabled { cursor: default; opacity: .45; }
 .input-mode-card.active { border-color: var(--accent); background: #223226; }
 .input-mode-card strong { color: var(--text-primary); font-size: 12px; }
 .input-mode-card span { color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+.mic-profile-cards { grid-template-columns: repeat(3, 1fr); max-width: 620px; }
+.mic-profile-advanced { margin-top: 14px; padding-top: 2px; border-top: 1px solid var(--border-light); }
+.mic-profile-advanced .settings-toggle-row:first-child { margin-top: 14px; }
 .appearance-preview { padding: 12px; border-radius: var(--radius-md); background: var(--panel-raised); }
 .settings-close-group { position: absolute; top: 16px; right: 18px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .settings-close {

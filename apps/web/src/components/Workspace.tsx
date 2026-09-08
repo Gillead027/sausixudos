@@ -11,7 +11,7 @@ import {
 import { AVATAR_DATA_URL_MAX_LENGTH, BANNER_DATA_URL_MAX_LENGTH } from '@sausixudos/shared';
 import { api } from '../api';
 import { useDelayedUnmount } from '../hooks/useDelayedUnmount';
-import { type InputMode, type ShareQuality, useVoiceRoom } from '../livekit/useVoiceRoom';
+import { type InputMode, type MicProfile, type ShareQuality, useVoiceRoom } from '../livekit/useVoiceRoom';
 import { describeMediaError } from '../mediaAccess';
 import { getPerfMode, type PerfMode, setPerfMode } from '../perfMode';
 import { getDensity, type Density, setDensity } from '../density';
@@ -49,6 +49,7 @@ import {
   SearchIcon,
   SettingsIcon,
   ShareIcon,
+  SpeakerIcon,
   UserIcon,
   VoiceIcon,
 } from './Icons';
@@ -352,23 +353,17 @@ function ChannelButton({
 function ParticipantRow({
   participant,
   speaking,
-  deafened,
   volume,
   setVolume,
-  streamVolume,
   accentColor,
   ownAvatarUrl,
-  outputVolume,
 }: {
   participant: LocalParticipant | RemoteParticipant;
   speaking: boolean;
-  deafened: boolean;
   volume: number;
   setVolume: (value: number) => void;
-  streamVolume: number;
   accentColor?: AccentColor | undefined;
   ownAvatarUrl: string;
-  outputVolume: number;
 }) {
   const name = participant.name || participant.identity;
   const local = participant instanceof LocalParticipant;
@@ -376,10 +371,6 @@ function ParticipantRow({
   const microphone = participant.getTrackPublication(Track.Source.Microphone);
   const muted = !microphone || microphone.isMuted;
   const isSharingScreen = Boolean(participant.getTrackPublication(Track.Source.ScreenShare));
-  const audioPublications = participant.audioTrackPublications as Map<string, TrackPublication>;
-  const trackVersion = Array.from(audioPublications.values())
-    .map((publication) => `${publication.trackSid}:${publication.isMuted}:${Boolean(publication.track)}`)
-    .join('|');
 
   return (
     <div className={`participant-row ${speaking ? 'active-speaker' : ''}`}>
@@ -408,17 +399,49 @@ function ParticipantRow({
           <output>{volume}</output>
         </label>
       )}
-      {!local && participant instanceof RemoteParticipant && (
-        <RemoteAudioSink
-          participant={participant}
-          volume={volume}
-          streamVolume={streamVolume}
-          outputVolume={outputVolume}
-          deafened={deafened}
-          trackVersion={trackVersion}
-        />
-      )}
     </div>
+  );
+}
+
+// Sempre montado enquanto conectado à voz, independente de qual canal (texto
+// ou voz) está sendo exibido — antes o áudio ficava preso dentro do painel de
+// membros da chamada, então trocar pra um canal de texto silenciava todo
+// mundo até reconectar. Áudio não pode depender de qual tela está visível.
+function VoiceAudioSinks({
+  participants,
+  volumes,
+  streamVolumes,
+  outputVolume,
+  deafened,
+}: {
+  participants: (LocalParticipant | RemoteParticipant)[];
+  volumes: Record<string, number>;
+  streamVolumes: Record<string, number>;
+  outputVolume: number;
+  deafened: boolean;
+}) {
+  return (
+    <>
+      {participants
+        .filter((participant): participant is RemoteParticipant => participant instanceof RemoteParticipant)
+        .map((participant) => {
+          const audioPublications = participant.audioTrackPublications as Map<string, TrackPublication>;
+          const trackVersion = Array.from(audioPublications.values())
+            .map((publication) => `${publication.trackSid}:${publication.isMuted}:${Boolean(publication.track)}`)
+            .join('|');
+          return (
+            <RemoteAudioSink
+              key={participant.identity}
+              participant={participant}
+              volume={volumes[participant.identity] ?? 100}
+              streamVolume={streamVolumes[participant.identity] ?? 100}
+              outputVolume={outputVolume}
+              deafened={deafened}
+              trackVersion={trackVersion}
+            />
+          );
+        })}
+    </>
   );
 }
 
@@ -614,8 +637,18 @@ function SettingsModal({
   setInputMode,
   pttKey,
   setPttKeyBinding,
+  micProfile,
+  setMicProfile,
   noiseSuppressionEnabled,
   setNoiseSuppression,
+  echoCancellationEnabled,
+  setEchoCancellation,
+  autoGainEnabled,
+  setAutoGain,
+  autoSensitivity,
+  setAutoSensitivity,
+  inputSensitivity,
+  setInputSensitivity,
 }: {
   open: boolean;
   onClose: () => void;
@@ -672,8 +705,18 @@ function SettingsModal({
   setInputMode: (mode: InputMode) => void;
   pttKey: string;
   setPttKeyBinding: (code: string) => void;
+  micProfile: MicProfile;
+  setMicProfile: (profile: MicProfile) => void;
   noiseSuppressionEnabled: boolean;
   setNoiseSuppression: (enabled: boolean) => void;
+  echoCancellationEnabled: boolean;
+  setEchoCancellation: (enabled: boolean) => void;
+  autoGainEnabled: boolean;
+  setAutoGain: (enabled: boolean) => void;
+  autoSensitivity: boolean;
+  setAutoSensitivity: (enabled: boolean) => void;
+  inputSensitivity: number;
+  setInputSensitivity: (value: number) => void;
 }) {
   const [listeningForKey, setListeningForKey] = useState(false);
   const [voiceSearch, setVoiceSearch] = useState('');
@@ -976,20 +1019,108 @@ function SettingsModal({
                   </>
                 )}
 
-                {matchesSearch('supressão de ruído cancelamento de eco ganho automático') && (
-                  <div className="settings-toggle-row voice-processing-toggle">
-                    <div>
-                      <span className="settings-label">Supressão de ruído</span>
-                      <p className="settings-hint">Reduz ventilador, teclado e ruídos constantes. Cancelamento de eco e ganho automático permanecem ativos.</p>
+                {matchesSearch('perfil de entrada isolamento de voz estúdio personalizado') && (
+                  <>
+                    <span className="settings-label">Perfil de entrada</span>
+                    <div className="input-mode-cards mic-profile-cards" role="group" aria-label="Perfil de entrada de microfone">
+                      <button type="button" className={`input-mode-card ${micProfile === 'isolamento' ? 'active' : ''}`} onClick={() => setMicProfile('isolamento')}>
+                        <MicIcon size={18} />
+                        <strong>Isolamento de Voz</strong>
+                        <span>Só a sua voz: o navegador filtra ruído, eco e ajusta o ganho automaticamente.</span>
+                      </button>
+                      <button type="button" className={`input-mode-card ${micProfile === 'estudio' ? 'active' : ''}`} onClick={() => setMicProfile('estudio')}>
+                        <SpeakerIcon size={18} />
+                        <strong>Estúdio</strong>
+                        <span>Áudio puro: microfone aberto, sem nenhum processamento.</span>
+                      </button>
+                      <button type="button" className={`input-mode-card ${micProfile === 'personalizado' ? 'active' : ''}`} onClick={() => setMicProfile('personalizado')}>
+                        <SettingsIcon size={18} />
+                        <strong>Personalizado</strong>
+                        <span>Modo avançado: escolha cada opção de processamento manualmente.</span>
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-label="Supressão de ruído"
-                      aria-checked={noiseSuppressionEnabled}
-                      className={`settings-switch ${noiseSuppressionEnabled ? 'on' : ''}`}
-                      onClick={() => setNoiseSuppression(!noiseSuppressionEnabled)}
-                    />
+                  </>
+                )}
+
+                {micProfile === 'personalizado' && matchesSearch('supressão de ruído cancelamento de eco ganho automático sensibilidade de entrada') && (
+                  <div className="mic-profile-advanced">
+                    <div className="settings-toggle-row voice-processing-toggle">
+                      <div>
+                        <span className="settings-label">Supressão de ruído</span>
+                        <p className="settings-hint">Reduz ventilador, teclado e ruídos constantes (não temos o Krisp do Discord — isso liga o filtro nativo do navegador).</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label="Supressão de ruído"
+                        aria-checked={noiseSuppressionEnabled}
+                        className={`settings-switch ${noiseSuppressionEnabled ? 'on' : ''}`}
+                        onClick={() => setNoiseSuppression(!noiseSuppressionEnabled)}
+                      />
+                    </div>
+                    <div className="settings-toggle-row voice-processing-toggle">
+                      <div>
+                        <span className="settings-label">Cancelamento de eco</span>
+                        <p className="settings-hint">Evita que o som dos seus alto-falantes volte pelo microfone.</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label="Cancelamento de eco"
+                        aria-checked={echoCancellationEnabled}
+                        className={`settings-switch ${echoCancellationEnabled ? 'on' : ''}`}
+                        onClick={() => setEchoCancellation(!echoCancellationEnabled)}
+                      />
+                    </div>
+                    <div className="settings-toggle-row voice-processing-toggle">
+                      <div>
+                        <span className="settings-label">Controle automático de ganho</span>
+                        <p className="settings-hint">Ajusta o volume de entrada automaticamente pra manter a fala num nível constante.</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label="Controle automático de ganho"
+                        aria-checked={autoGainEnabled}
+                        className={`settings-switch ${autoGainEnabled ? 'on' : ''}`}
+                        onClick={() => setAutoGain(!autoGainEnabled)}
+                      />
+                    </div>
+
+                    <div className="settings-toggle-row voice-processing-toggle">
+                      <div>
+                        <span className="settings-label">Ajustar automaticamente a sensibilidade de entrada</span>
+                        <p className="settings-hint">Em modo Voz ativa, o microfone só transmite quando você está falando de verdade — calibra sozinho o ruído de fundo ao entrar na chamada.</p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label="Ajustar automaticamente a sensibilidade de entrada"
+                        aria-checked={autoSensitivity}
+                        className={`settings-switch ${autoSensitivity ? 'on' : ''}`}
+                        onClick={() => setAutoSensitivity(!autoSensitivity)}
+                      />
+                    </div>
+                    {!autoSensitivity && (
+                      <div>
+                        <label htmlFor="input-sensitivity">Sensibilidade de entrada (manual)</label>
+                        <div className="pref-slider-row">
+                          <input
+                            id="input-sensitivity"
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={inputSensitivity}
+                            onChange={(event) => setInputSensitivity(Number(event.target.value))}
+                          />
+                          <output>{inputSensitivity}%</output>
+                        </div>
+                        <p className="settings-hint">Quanto maior, mais alto você precisa falar pra o microfone ligar. Use o teste de microfone acima pra calibrar.</p>
+                      </div>
+                    )}
+                    {inputMode !== 'voice' && (
+                      <p className="settings-hint">A sensibilidade de entrada só se aplica no modo Voz ativa — em Push to talk, a tecla já controla isso.</p>
+                    )}
                   </div>
                 )}
 
@@ -1252,6 +1383,11 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [volumes, setVolumes] = useState<Record<string, number>>({});
   const [streamVolumes, setStreamVolumes] = useState<Record<string, number>>({});
   const [watchingScreenIds, setWatchingScreenIds] = useState<Set<string>>(new Set());
+  // Por padrão, mutamos os outros localmente pra evitar vazar a voz deles de
+  // volta pra dentro da transmissão (captura por loopback pega tudo que sai
+  // pelo alto-falante). Esse toggle deixa quem está transmitindo optar por
+  // continuar ouvindo mesmo assim, assumindo o risco de vazamento.
+  const [allowListenWhileSharing, setAllowListenWhileSharing] = useState(false);
   const [chatText, setChatText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -1471,17 +1607,10 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         key={participant.identity}
         participant={participant}
         speaking={voice.speakers.has(participant.identity)}
-        // Compartilhando com áudio do sistema: a captura por loopback pega
-        // tudo que sai pelo seu alto-falante, incluindo a voz dos outros que
-        // o app está tocando pra você — mutar aqui evita que isso volte pra
-        // dentro da própria transmissão.
-        deafened={voice.deafened || voice.shareAudioActive}
         volume={volumes[participant.identity] ?? 100}
         setVolume={(value) => setVolumes((current) => ({ ...current, [participant.identity]: value }))}
-        streamVolume={streamVolumes[participant.identity] ?? 100}
         accentColor={participantAccentColor(participant, session.accentColor)}
         ownAvatarUrl={session.avatarUrl}
-        outputVolume={outputVolume}
       />
     );
   }
@@ -1533,6 +1662,16 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         onSaveProfile={() => void saveProfile()}
         onCancelProfile={resetProfileDraft}
         onSignOut={() => void voice.disconnect().finally(onSignOut)}
+        micProfile={voice.micProfile}
+        setMicProfile={voice.setMicProfile}
+        echoCancellationEnabled={voice.echoCancellationEnabled}
+        setEchoCancellation={voice.setEchoCancellation}
+        autoGainEnabled={voice.autoGainEnabled}
+        setAutoGain={voice.setAutoGain}
+        autoSensitivity={voice.autoSensitivity}
+        setAutoSensitivity={voice.setAutoSensitivity}
+        inputSensitivity={voice.inputSensitivity}
+        setInputSensitivity={voice.setInputSensitivity}
         audioInputs={voice.audioInputs}
         audioOutputs={voice.audioOutputs}
         videoInputs={voice.videoInputs}
@@ -1556,6 +1695,15 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         onCreated={handleTextChannelCreated}
         returnFocusRef={createTextChannelButtonRef}
       />
+      {voice.connected && (
+        <VoiceAudioSinks
+          participants={typedParticipants}
+          volumes={volumes}
+          streamVolumes={streamVolumes}
+          outputVolume={outputVolume}
+          deafened={voice.deafened || (voice.shareAudioActive && !allowListenWhileSharing)}
+        />
+      )}
       <aside className="server-rail" aria-label="Servidores">
         <button className="server-button home active" type="button" title="Sausixudos" aria-label="Sausixudos">S</button>
         <span className="rail-divider" />
@@ -1759,7 +1907,14 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         )}
         {voice.shareAudioActive && (
           <div className="audio-permission share-audio-notice">
-            Compartilhando com áudio do sistema — a voz dos outros está muda só pra você, pra não vazar na sua transmissão.
+            <span>
+              {allowListenWhileSharing
+                ? 'Compartilhando com áudio do sistema — você optou por continuar ouvindo os outros, então a voz deles pode vazar na sua transmissão.'
+                : 'Compartilhando com áudio do sistema — a voz dos outros está muda só pra você, pra não vazar na sua transmissão.'}
+            </span>
+            <button type="button" className="share-audio-notice-toggle" onClick={() => setAllowListenWhileSharing((current) => !current)}>
+              {allowListenWhileSharing ? 'Voltar a mutar' : 'Ouvir mesmo assim'}
+            </button>
           </div>
         )}
 

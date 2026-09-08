@@ -30,17 +30,68 @@ const INPUT_MODE_KEY = 'gc:input-mode';
 const PTT_KEY_KEY = 'gc:ptt-key';
 const DEFAULT_PTT_KEY = 'ControlRight';
 const NOISE_SUPPRESSION_KEY = 'gc:noise-suppression';
+const ECHO_CANCELLATION_KEY = 'gc:echo-cancellation';
+const AUTO_GAIN_KEY = 'gc:auto-gain';
+const MIC_PROFILE_KEY = 'gc:mic-profile';
+const AUTO_SENSITIVITY_KEY = 'gc:auto-sensitivity';
+const INPUT_SENSITIVITY_KEY = 'gc:input-sensitivity';
+
+/**
+ * Espelha os 3 perfis do Discord usando só as constraints nativas do
+ * navegador (não temos acesso ao Krisp, que é tecnologia proprietária
+ * deles) — "Personalizado" expõe os 3 controles nativos individualmente.
+ */
+export type MicProfile = 'isolamento' | 'estudio' | 'personalizado';
+
+function loadMicProfile(): MicProfile {
+  const stored = localStorage.getItem(MIC_PROFILE_KEY);
+  if (stored === 'estudio' || stored === 'personalizado') return stored;
+  if (stored === 'isolamento') return 'isolamento';
+  // Ninguém escolheu um perfil ainda: quem já tinha desligado a supressão de
+  // ruído no toggle antigo (única opção que existia antes desse recurso) cai
+  // em "Personalizado" pra manter exatamente o que essa pessoa já preferia,
+  // em vez de reativar a supressão silenciosamente com o padrão "Isolamento".
+  return localStorage.getItem(NOISE_SUPPRESSION_KEY) === 'false' ? 'personalizado' : 'isolamento';
+}
 
 function loadNoiseSuppression(): boolean {
   return localStorage.getItem(NOISE_SUPPRESSION_KEY) !== 'false';
 }
 
-function microphoneCaptureOptions(noiseSuppression: boolean) {
-  return {
-    noiseSuppression,
-    echoCancellation: true,
-    autoGainControl: true,
-  } as const;
+function loadEchoCancellation(): boolean {
+  return localStorage.getItem(ECHO_CANCELLATION_KEY) !== 'false';
+}
+
+function loadAutoGain(): boolean {
+  return localStorage.getItem(AUTO_GAIN_KEY) !== 'false';
+}
+
+function loadAutoSensitivity(): boolean {
+  return localStorage.getItem(AUTO_SENSITIVITY_KEY) !== 'false';
+}
+
+function loadInputSensitivity(): number {
+  const stored = localStorage.getItem(INPUT_SENSITIVITY_KEY);
+  const value = stored === null ? NaN : Number(stored);
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 15;
+}
+
+function microphoneCaptureOptions(
+  profile: MicProfile,
+  noiseSuppression: boolean,
+  echoCancellation: boolean,
+  autoGain: boolean,
+) {
+  if (profile === 'estudio') {
+    // "Áudio puro": igual ao Discord, mic aberto sem nenhum processamento.
+    return { noiseSuppression: false, echoCancellation: false, autoGainControl: false } as const;
+  }
+  if (profile === 'isolamento') {
+    // Sem o Krisp de verdade, o mais próximo é ligar tudo que o navegador
+    // já processa nativamente.
+    return { noiseSuppression: true, echoCancellation: true, autoGainControl: true } as const;
+  }
+  return { noiseSuppression, echoCancellation, autoGainControl: autoGain };
 }
 
 function loadInputMode(): InputMode {
@@ -107,7 +158,10 @@ function isScreenShareCancelled(error: unknown): boolean {
 }
 
 export function useVoiceRoom() {
+  const initialMicProfile = useRef(loadMicProfile());
   const initialNoiseSuppression = useRef(loadNoiseSuppression());
+  const initialEchoCancellation = useRef(loadEchoCancellation());
+  const initialAutoGain = useRef(loadAutoGain());
   const [room] = useState(
     () =>
       new Room({
@@ -117,7 +171,12 @@ export function useVoiceRoom() {
         adaptiveStream: false,
         dynacast: true,
         disconnectOnPageLeave: true,
-        audioCaptureDefaults: microphoneCaptureOptions(initialNoiseSuppression.current),
+        audioCaptureDefaults: microphoneCaptureOptions(
+          initialMicProfile.current,
+          initialNoiseSuppression.current,
+          initialEchoCancellation.current,
+          initialAutoGain.current,
+        ),
       }),
   );
   const [currentChannel, setCurrentChannel] = useState<VoiceChannel | null>(null);
@@ -147,18 +206,44 @@ export function useVoiceRoom() {
   const [inputMode, setInputModeState] = useState<InputMode>(() => loadInputMode());
   const [pttKey, setPttKeyState] = useState(() => loadPttKey());
   const [pttActive, setPttActive] = useState(false);
+  const [micProfile, setMicProfileState] = useState<MicProfile>(initialMicProfile.current);
   const [noiseSuppressionEnabled, setNoiseSuppressionEnabled] = useState(initialNoiseSuppression.current);
+  const [echoCancellationEnabled, setEchoCancellationEnabled] = useState(initialEchoCancellation.current);
+  const [autoGainEnabled, setAutoGainEnabled] = useState(initialAutoGain.current);
+  const [autoSensitivity, setAutoSensitivityState] = useState(() => loadAutoSensitivity());
+  const [inputSensitivity, setInputSensitivityState] = useState(() => loadInputSensitivity());
   const wasMicEnabled = useRef(true);
   const inputModeRef = useRef(inputMode);
   const pttKeyRef = useRef(pttKey);
+  const micProfileRef = useRef(micProfile);
   const noiseSuppressionRef = useRef(noiseSuppressionEnabled);
+  const echoCancellationRef = useRef(echoCancellationEnabled);
+  const autoGainRef = useRef(autoGainEnabled);
+  const inputSensitivityRef = useRef(inputSensitivity);
+  const deafenedRef = useRef(false);
   // Suprime os sons de entrada/saída pra quem já estava no canal antes de
   // você conectar — sem isso, entrar numa call cheia tocaria um bipe pra
   // cada pessoa já presente, tudo de uma vez.
   const suppressPresenceSoundsRef = useRef(true);
   inputModeRef.current = inputMode;
   pttKeyRef.current = pttKey;
+  micProfileRef.current = micProfile;
   noiseSuppressionRef.current = noiseSuppressionEnabled;
+  echoCancellationRef.current = echoCancellationEnabled;
+  autoGainRef.current = autoGainEnabled;
+  inputSensitivityRef.current = inputSensitivity;
+  deafenedRef.current = deafened;
+
+  const currentMicCaptureOptions = useCallback(
+    () =>
+      microphoneCaptureOptions(
+        micProfileRef.current,
+        noiseSuppressionRef.current,
+        echoCancellationRef.current,
+        autoGainRef.current,
+      ),
+    [],
+  );
 
   const syncRoom = useCallback(() => {
     const everyone: Participant[] = [
@@ -290,7 +375,7 @@ export function useVoiceRoom() {
       if (event.code !== pttKeyRef.current || pttActive) return;
       setPttActive(true);
       void room.localParticipant
-        .setMicrophoneEnabled(true, microphoneCaptureOptions(noiseSuppressionRef.current))
+        .setMicrophoneEnabled(true, currentMicCaptureOptions())
         .then(syncRoom);
     };
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -306,6 +391,101 @@ export function useVoiceRoom() {
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [connectionState, inputMode, pttActive, room, syncRoom]);
+
+  // "Sensibilidade de entrada" (perfil Personalizado, modo Voz ativa): igual
+  // ao gate de ruído do Discord. Abre uma captura própria (independente do
+  // track publicado) só pra medir o nível do microfone — assim conseguimos
+  // decidir quando ligar/desligar o microfone publicado sem travar a
+  // detecção (um MediaStreamTrack desabilitado também para de gerar dados
+  // pro analisador, então monitorar o próprio track publicado não funciona).
+  useEffect(() => {
+    if (connectionState !== ConnectionState.Connected || inputMode !== 'voice' || micProfile !== 'personalizado') {
+      return;
+    }
+
+    let cancelled = false;
+    let audioContext: AudioContext | undefined;
+    let stream: MediaStream | undefined;
+    let rafId = 0;
+    let gateOpen = true;
+    let lastLoudAt = Date.now();
+    let calibratedThreshold: number | null = null;
+    const calibrationSamples: number[] = [];
+    const calibrationStart = Date.now();
+    const HANGOVER_MS = 400;
+    const CALIBRATION_MS = 1500;
+
+    async function start() {
+      try {
+        const constraints: MediaStreamConstraints = {
+          audio: selectedMicId === 'default' ? true : { deviceId: { exact: selectedMicId } },
+        };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        const tick = () => {
+          if (cancelled) return;
+          analyser.getByteFrequencyData(data);
+          const average = data.reduce((sum, value) => sum + value, 0) / data.length;
+          const level = Math.min(100, Math.round((average / 160) * 100));
+
+          let effectiveThreshold: number | null;
+          if (autoSensitivity) {
+            if (calibratedThreshold === null) {
+              calibrationSamples.push(level);
+              if (Date.now() - calibrationStart >= CALIBRATION_MS) {
+                const floor = calibrationSamples.reduce((sum, value) => sum + value, 0) / calibrationSamples.length;
+                calibratedThreshold = Math.min(60, Math.max(6, floor + 12));
+              }
+            }
+            effectiveThreshold = calibratedThreshold;
+          } else {
+            effectiveThreshold = inputSensitivityRef.current;
+          }
+
+          if (effectiveThreshold !== null && !deafenedRef.current) {
+            const now = Date.now();
+            if (level > effectiveThreshold) lastLoudAt = now;
+            const shouldBeOpen = now - lastLoudAt < HANGOVER_MS;
+            if (shouldBeOpen !== gateOpen) {
+              gateOpen = shouldBeOpen;
+              void room.localParticipant
+                .setMicrophoneEnabled(gateOpen, gateOpen ? currentMicCaptureOptions() : undefined)
+                .then(syncRoom);
+            }
+          }
+          rafId = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch {
+        // Sem acesso pra monitorar o nível — a sensibilidade de entrada não
+        // atua, mas o resto da chamada continua funcionando normalmente.
+      }
+    }
+
+    void start();
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      stream?.getTracks().forEach((track) => track.stop());
+      void audioContext?.close();
+      // Se o gate tinha fechado o microfone, devolve pro estado normal
+      // (ligado) ao sair desse modo — senão a pessoa ficaria muda sem saber.
+      if (!gateOpen) {
+        void room.localParticipant.setMicrophoneEnabled(true, currentMicCaptureOptions()).then(syncRoom);
+      }
+    };
+  }, [connectionState, inputMode, micProfile, autoSensitivity, selectedMicId, room, syncRoom, currentMicCaptureOptions]);
 
   const connect = useCallback(
     async (channel: VoiceChannel) => {
@@ -332,7 +512,7 @@ export function useVoiceRoom() {
         try {
           await room.localParticipant.setMicrophoneEnabled(
             true,
-            microphoneCaptureOptions(noiseSuppressionRef.current),
+            currentMicCaptureOptions(),
           );
           if (inputModeRef.current === 'ptt') {
             await room.localParticipant.setMicrophoneEnabled(false);
@@ -375,7 +555,7 @@ export function useVoiceRoom() {
       const enabled = !room.localParticipant.isMicrophoneEnabled;
       await room.localParticipant.setMicrophoneEnabled(
         enabled,
-        enabled ? microphoneCaptureOptions(noiseSuppressionRef.current) : undefined,
+        enabled ? currentMicCaptureOptions() : undefined,
       );
       syncRoom();
     } catch (mediaError) {
@@ -393,7 +573,7 @@ export function useVoiceRoom() {
       } else if (wasMicEnabled.current) {
         await room.localParticipant.setMicrophoneEnabled(
           true,
-          microphoneCaptureOptions(noiseSuppressionRef.current),
+          currentMicCaptureOptions(),
         );
       }
       setDeafened(next);
@@ -409,7 +589,7 @@ export function useVoiceRoom() {
       setInputModeState(mode);
       if (mode === 'voice' && connectionState === ConnectionState.Connected) {
         void room.localParticipant
-          .setMicrophoneEnabled(true, microphoneCaptureOptions(noiseSuppressionRef.current))
+          .setMicrophoneEnabled(true, currentMicCaptureOptions())
           .then(syncRoom);
       } else if (mode === 'ptt' && connectionState === ConnectionState.Connected) {
         void room.localParticipant.setMicrophoneEnabled(false).then(syncRoom);
@@ -423,28 +603,77 @@ export function useVoiceRoom() {
     setPttKeyState(code);
   }, []);
 
+  // Reaplica as constraints de captura (perfil + os 3 toggles individuais do
+  // modo Personalizado) no track de microfone já publicado, sem precisar
+  // reconectar — usado por todo setter de perfil/supressão/eco/ganho abaixo.
+  const applyMicCaptureOptions = useCallback(async () => {
+    const captureOptions = currentMicCaptureOptions();
+    room.options.audioCaptureDefaults = {
+      ...room.options.audioCaptureDefaults,
+      ...captureOptions,
+    };
+    const microphone = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    if (microphone instanceof LocalAudioTrack) {
+      try {
+        await microphone.applyConstraints(captureOptions);
+        setError('');
+      } catch (mediaError) {
+        setError(await describeMediaError(mediaError, 'microphone'));
+      }
+    }
+  }, [room, currentMicCaptureOptions]);
+
+  const setMicProfile = useCallback(
+    (profile: MicProfile) => {
+      localStorage.setItem(MIC_PROFILE_KEY, profile);
+      micProfileRef.current = profile;
+      setMicProfileState(profile);
+      void applyMicCaptureOptions();
+    },
+    [applyMicCaptureOptions],
+  );
+
   const setNoiseSuppression = useCallback(
-    async (enabled: boolean) => {
+    (enabled: boolean) => {
       localStorage.setItem(NOISE_SUPPRESSION_KEY, String(enabled));
       noiseSuppressionRef.current = enabled;
       setNoiseSuppressionEnabled(enabled);
-      const captureOptions = microphoneCaptureOptions(enabled);
-      room.options.audioCaptureDefaults = {
-        ...room.options.audioCaptureDefaults,
-        ...captureOptions,
-      };
-      const microphone = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (microphone instanceof LocalAudioTrack) {
-        try {
-          await microphone.applyConstraints(captureOptions);
-          setError('');
-        } catch (mediaError) {
-          setError(await describeMediaError(mediaError, 'microphone'));
-        }
-      }
+      void applyMicCaptureOptions();
     },
-    [room],
+    [applyMicCaptureOptions],
   );
+
+  const setEchoCancellation = useCallback(
+    (enabled: boolean) => {
+      localStorage.setItem(ECHO_CANCELLATION_KEY, String(enabled));
+      echoCancellationRef.current = enabled;
+      setEchoCancellationEnabled(enabled);
+      void applyMicCaptureOptions();
+    },
+    [applyMicCaptureOptions],
+  );
+
+  const setAutoGain = useCallback(
+    (enabled: boolean) => {
+      localStorage.setItem(AUTO_GAIN_KEY, String(enabled));
+      autoGainRef.current = enabled;
+      setAutoGainEnabled(enabled);
+      void applyMicCaptureOptions();
+    },
+    [applyMicCaptureOptions],
+  );
+
+  const setAutoSensitivity = useCallback((enabled: boolean) => {
+    localStorage.setItem(AUTO_SENSITIVITY_KEY, String(enabled));
+    setAutoSensitivityState(enabled);
+  }, []);
+
+  const setInputSensitivity = useCallback((value: number) => {
+    const clamped = Math.min(100, Math.max(0, Math.round(value)));
+    localStorage.setItem(INPUT_SENSITIVITY_KEY, String(clamped));
+    inputSensitivityRef.current = clamped;
+    setInputSensitivityState(clamped);
+  }, []);
 
   const setMicrophoneDevice = useCallback(
     async (deviceId: string) => {
@@ -573,10 +802,20 @@ export function useVoiceRoom() {
       inputMode,
       pttKey,
       pttActive,
+      micProfile,
       noiseSuppressionEnabled,
+      echoCancellationEnabled,
+      autoGainEnabled,
+      autoSensitivity,
+      inputSensitivity,
       setInputMode,
       setPttKeyBinding,
+      setMicProfile,
       setNoiseSuppression,
+      setEchoCancellation,
+      setAutoGain,
+      setAutoSensitivity,
+      setInputSensitivity,
       setMicrophoneDevice,
       setSpeakerDevice,
       setCameraDevice,
@@ -615,10 +854,20 @@ export function useVoiceRoom() {
       inputMode,
       pttKey,
       pttActive,
+      micProfile,
       noiseSuppressionEnabled,
+      echoCancellationEnabled,
+      autoGainEnabled,
+      autoSensitivity,
+      inputSensitivity,
       setInputMode,
       setPttKeyBinding,
+      setMicProfile,
       setNoiseSuppression,
+      setEchoCancellation,
+      setAutoGain,
+      setAutoSensitivity,
+      setInputSensitivity,
       setMicrophoneDevice,
       setSpeakerDevice,
       setCameraDevice,
