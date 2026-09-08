@@ -648,6 +648,10 @@ export function useVoiceRoom() {
         setTimeout(() => {
           suppressPresenceSoundsRef.current = false;
         }, 1_500);
+        // Este é o som de VOCÊ entrando — RoomEvent.ParticipantConnected (que
+        // toca playJoinSound lá em cima) só dispara pros outros participantes,
+        // o LiveKit não avisa a própria conexão por ali.
+        playJoinSound(getOutputVolume());
         setCurrentChannel(channel);
         try {
           await room.localParticipant.setMicrophoneEnabled(
@@ -676,6 +680,7 @@ export function useVoiceRoom() {
   );
 
   const disconnect = useCallback(async () => {
+    if (currentChannel) playLeaveSound(getOutputVolume());
     await room.disconnect();
     setCurrentChannel(null);
     setParticipants([]);
@@ -686,7 +691,7 @@ export function useVoiceRoom() {
     setScreenEnabled(false);
     setCameraEnabled(false);
     setScreenTracks([]);
-  }, [room, syncRoom]);
+  }, [currentChannel, room, syncRoom]);
 
   const toggleMicrophone = useCallback(async () => {
     if (deafened) return;
