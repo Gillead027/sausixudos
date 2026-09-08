@@ -101,6 +101,10 @@ export class YtDlpAudioSource {
       '--no-warnings', '--no-playlist',
       '--extractor-args', 'youtube:player_client=mweb',
       '--extractor-args', `youtubepot-bgutilhttp:base_url=${this.options.potBaseUrl}`,
+      // HLS nativo do yt-dlp usa arquivos tempor?rios de fragmento. No container
+      // o cwd n?o ? grav?vel; delegar m3u8 ao FFmpeg mant?m o stream em pipe.
+      '--downloader', 'm3u8:ffmpeg',
+      '--ffmpeg-location', this.options.ffmpegPath,
       '-f', 'bestaudio/best', '-o', '-', this.options.webUrl,
     ];
 
