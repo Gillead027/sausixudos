@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AudioPresets,
   ConnectionState,
   LocalAudioTrack,
   LocalParticipant,
@@ -63,11 +62,13 @@ const SCREEN_SHARE_AUDIO_CAPTURE = {
 } as const;
 
 // audioPreset padrão do LiveKit pra qualquer publicação de áudio é otimizado
-// pra voz (bitrate baixo); música/jogo precisa de um preset de música de
-// verdade — e dtx (que trata trechos "quietos" como silêncio e para de
-// mandar dados) corta partes baixas de música, então fica desligado aqui.
+// pra voz (bitrate baixo); música/jogo precisa de bitrate de música de
+// verdade — 320kbps é o teto prático do Opus estéreo (bem acima disso não
+// tem ganho perceptível, o codec já fica transparente bem antes) — e dtx
+// (que trata trechos "quietos" como silêncio e para de mandar dados) corta
+// partes baixas de música, então fica desligado aqui.
 const SCREEN_SHARE_AUDIO_PUBLISH = {
-  audioPreset: AudioPresets.musicHighQualityStereo,
+  audioPreset: { maxBitrate: 320_000 },
   dtx: false,
   red: true,
 } as const;
@@ -129,6 +130,12 @@ export function useVoiceRoom() {
   const [deafened, setDeafened] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
   const [screenEnabled, setScreenEnabled] = useState(false);
+  // Captura de áudio do sistema (loopback) pega tudo que sai pelo alto-falante
+  // de quem compartilha — incluindo a voz dos outros que o próprio app está
+  // tocando pra ela. Não dá pra filtrar isso no Windows sem um driver de
+  // áudio virtual, então a saída é mutar localmente (só pra quem compartilha)
+  // enquanto o áudio do sistema estiver indo junto, senão vaza de volta.
+  const [shareAudioActive, setShareAudioActive] = useState(false);
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [canPlaybackAudio, setCanPlaybackAudio] = useState(true);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
@@ -226,6 +233,14 @@ export function useVoiceRoom() {
       syncRoom();
       if (!suppressPresenceSoundsRef.current) playLeaveSound(getOutputVolume());
     };
+    // Cobre o caso de parar o compartilhamento pela barra nativa do Windows/
+    // navegador em vez do nosso botão — sem isso, o mudo ficava travado.
+    const onLocalTrackUnpublished = (publication: TrackPublication) => {
+      if (publication.source === Track.Source.ScreenShare || publication.source === Track.Source.ScreenShareAudio) {
+        setShareAudioActive(false);
+      }
+      syncRoom();
+    };
 
     room
       .on(RoomEvent.ParticipantConnected, onParticipantConnected)
@@ -235,7 +250,7 @@ export function useVoiceRoom() {
       .on(RoomEvent.TrackMuted, syncRoom)
       .on(RoomEvent.TrackUnmuted, syncRoom)
       .on(RoomEvent.LocalTrackPublished, syncRoom)
-      .on(RoomEvent.LocalTrackUnpublished, syncRoom)
+      .on(RoomEvent.LocalTrackUnpublished, onLocalTrackUnpublished)
       .on(RoomEvent.ActiveSpeakersChanged, onActiveSpeakers)
       .on(RoomEvent.DataReceived, onData)
       .on(RoomEvent.ConnectionStateChanged, onStateChanged)
@@ -476,6 +491,7 @@ export function useVoiceRoom() {
       try {
         if (room.localParticipant.isScreenShareEnabled) {
           await room.localParticipant.setScreenShareEnabled(false);
+          setShareAudioActive(false);
         } else {
           const settings = shareSettings[quality];
           await room.localParticipant.setScreenShareEnabled(
@@ -491,6 +507,10 @@ export function useVoiceRoom() {
           if (mediaStreamTrack && 'contentHint' in mediaStreamTrack) {
             mediaStreamTrack.contentHint = 'detail';
           }
+          const audioPublished = Boolean(
+            room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio),
+          );
+          setShareAudioActive(audioPublished);
         }
         syncRoom();
       } catch (mediaError) {
@@ -541,6 +561,7 @@ export function useVoiceRoom() {
       deafened,
       micEnabled,
       screenEnabled,
+      shareAudioActive,
       cameraEnabled,
       canPlaybackAudio,
       audioInputs,
@@ -582,6 +603,7 @@ export function useVoiceRoom() {
       deafened,
       micEnabled,
       screenEnabled,
+      shareAudioActive,
       cameraEnabled,
       canPlaybackAudio,
       audioInputs,

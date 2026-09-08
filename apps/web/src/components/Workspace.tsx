@@ -1471,7 +1471,11 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         key={participant.identity}
         participant={participant}
         speaking={voice.speakers.has(participant.identity)}
-        deafened={voice.deafened}
+        // Compartilhando com áudio do sistema: a captura por loopback pega
+        // tudo que sai pelo seu alto-falante, incluindo a voz dos outros que
+        // o app está tocando pra você — mutar aqui evita que isso volte pra
+        // dentro da própria transmissão.
+        deafened={voice.deafened || voice.shareAudioActive}
         volume={volumes[participant.identity] ?? 100}
         setVolume={(value) => setVolumes((current) => ({ ...current, [participant.identity]: value }))}
         streamVolume={streamVolumes[participant.identity] ?? 100}
@@ -1752,6 +1756,11 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         )}
         {!voice.canPlaybackAudio && voice.connected && (
           <button className="audio-permission" type="button" onClick={() => void voice.startAudio()}>Liberar reprodução de áudio</button>
+        )}
+        {voice.shareAudioActive && (
+          <div className="audio-permission share-audio-notice">
+            Compartilhando com áudio do sistema — a voz dos outros está muda só pra você, pra não vazar na sua transmissão.
+          </div>
         )}
 
         <div className={`room-content ${chatOpen && voice.connected ? 'with-chat' : ''}`}>
