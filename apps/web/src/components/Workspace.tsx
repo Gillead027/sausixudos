@@ -371,6 +371,7 @@ function ChannelButton({
             <span className="channel-user-name">{participant.name}</span>
             {isBot && <span className="bot-badge">BOT</span>}
             {participant.isSharingScreen && <span className="live-badge live-badge-inline">AO VIVO</span>}
+            {!isBot && participant.isMuted && <MicOffIcon className="channel-user-muted" size={12} />}
           </button>
         );
       })}
@@ -398,8 +399,6 @@ function ParticipantRow({
   const metadata = parseParticipantMetadata(participant.metadata);
   const isBot = metadata?.participantType === 'BOT';
   const avatarUrl = useRemoteAvatar(participant, ownAvatarUrl);
-  const microphone = participant.getTrackPublication(Track.Source.Microphone);
-  const muted = !microphone || microphone.isMuted;
   const isSharingScreen = Boolean(participant.getTrackPublication(Track.Source.ScreenShare));
 
   return (
@@ -418,9 +417,8 @@ function ParticipantRow({
             {isBot && <span className="bot-badge">BOT</span>}
             {isSharingScreen && <span className="live-badge" title="Compartilhando a tela">AO VIVO</span>}
           </strong>
-          <span>{isBot ? 'Ocioso' : muted ? 'Microfone desligado' : 'Conectado'}</span>
+          <span>{isBot ? 'Ocioso' : 'Conectado'}</span>
         </div>
-        {muted && <MicOffIcon className="participant-muted" size={14} />}
       </button>
       {!local && (
         <label className="volume-control" title={`Volume de ${name}: ${volume}%`}>

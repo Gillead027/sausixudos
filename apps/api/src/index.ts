@@ -369,11 +369,13 @@ app.get('/api/rooms', requireSession, async (_request, response, next) => {
           ...channel,
           participants: participants.map((participant) => {
             const metadata = parseParticipantMetadata(participant.metadata);
+            const microphoneTrack = participant.tracks.find((track) => track.source === TrackSource.MICROPHONE);
             return {
               identity: participant.identity,
               name: participant.name || participant.identity,
               participantType: metadata?.participantType ?? 'HUMAN',
               isSharingScreen: participant.tracks.some((track) => track.source === TrackSource.SCREEN_SHARE),
+              isMuted: microphoneTrack?.muted ?? true,
             };
           }),
         };

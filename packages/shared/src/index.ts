@@ -206,7 +206,12 @@ export function isMusicBotCommandRequest(value: unknown): value is MusicBotComma
   ) {
     if (candidate.command === 'volume') {
       const volume = (candidate.args as { volume?: unknown }).volume;
-      return Number.isInteger(volume) && (volume as number) >= 0 && (volume as number) <= 100;
+      return (
+        Object.keys(candidate.args).length === 1 &&
+        Number.isInteger(volume) &&
+        (volume as number) >= 0 &&
+        (volume as number) <= 100
+      );
     }
     return Object.keys(candidate.args).length === 0;
   }
@@ -242,6 +247,7 @@ export interface RoomParticipantSummary {
   name: string;
   participantType: ParticipantType;
   isSharingScreen: boolean;
+  isMuted: boolean;
 }
 
 export interface RoomSummary extends VoiceChannel {
