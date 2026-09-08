@@ -38,10 +38,12 @@ export function MusicCard({ card, onCommand }: MusicCardProps) {
   const [liked, setLiked] = useState(false);
   const [reaction, setReaction] = useState<'love' | 'nope' | null>(null);
   const [autoplay, setAutoplay] = useState(false);
+  const [coverFailed, setCoverFailed] = useState(false);
 
   useEffect(() => {
     setLiveCard(card);
     setPositionMs(card.positionMs);
+    setCoverFailed(false);
   }, [card.title, card.webUrl, card.requestedBy, card.durationMs]);
 
   useEffect(() => {
@@ -97,8 +99,13 @@ export function MusicCard({ card, onCommand }: MusicCardProps) {
             <div className="sausimusic-detail-line"><span className="sausimusic-bullet" aria-hidden="true" /><span className="sausimusic-voice-pill"><Glyph name="speaker" />{liveCard.voiceChannelId?.toUpperCase() || 'GERAL'}</span></div>
           </div>
           <div className="sausimusic-art-column">
-            {liveCard.thumbnailUrl ? (
-              <img className="sausimusic-cover" src={liveCard.thumbnailUrl} alt={`Capa de ${liveCard.title}`} />
+            {liveCard.thumbnailUrl && !coverFailed ? (
+              <img
+                className="sausimusic-cover"
+                src={`/api/music/thumbnail?url=${encodeURIComponent(liveCard.thumbnailUrl)}`}
+                alt={`Capa de ${liveCard.title}`}
+                onError={() => setCoverFailed(true)}
+              />
             ) : (
               <div className="sausimusic-cover sausimusic-cover-placeholder" aria-hidden="true"><span className="sausimusic-cover-bars"><i /><i /><i /></span></div>
             )}

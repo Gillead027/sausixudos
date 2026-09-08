@@ -67,6 +67,10 @@ export const api = {
   getConfig: () => request<PublicConfig>('/api/config'),
   getRooms: () =>
     request<{ rooms: RoomSummary[]; livekitAvailable: boolean }>('/api/rooms'),
+  disconnectVoiceParticipant: (roomId: string, identity: string) =>
+    request<void>(`/api/rooms/${encodeURIComponent(roomId)}/participants/${encodeURIComponent(identity)}/disconnect`, {
+      method: 'POST',
+    }),
   getTextChannels: () => request<{ channels: TextChannel[] }>('/api/text-channels'),
   createTextChannel: (name: string, description: string) =>
     request<{ channel: TextChannel }>('/api/text-channels', {

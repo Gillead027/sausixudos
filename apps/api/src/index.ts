@@ -6,6 +6,7 @@ import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
 import { z } from 'zod';
 import {
   ACCENT_COLORS,
+  MUSIC_BOT_IDENTITY,
   AVATAR_DATA_URL_MAX_LENGTH,
   BANNER_DATA_URL_MAX_LENGTH,
   BIO_MAX_LENGTH,
@@ -37,15 +38,20 @@ import {
 } from './session.js';
 import { createUser, getUserById, getUserByUsername, updateUserProfile, verifyPassword, type UserRecord } from './users.js';
 import {
-  createMusicBotTextMessage,
+  deleteMusicBotTextMessage,
+  deleteMusicBotTextMessagesForVoiceChannel,
+  upsertMusicBotTextMessage,
   createTextChannel,
   createTextMessage,
+  getMusicBotTextMessage,
   getTextChannelById,
   getTextChannelByName,
   listTextChannels,
   listTextMessages,
 } from './textChannels.js';
 import { authorizeMusicCommand } from './musicCommands.js';
+import { fetchMusicThumbnail } from './musicThumbnails.js';
+import { authorizeVoiceDisconnect } from './voiceModeration.js';
 
 const app = express();
 const roomService = new RoomServiceClient(
@@ -129,6 +135,10 @@ const profileSchema = z.object({
 });
 
 const tokenSchema = z.object({ roomId: z.string().min(1).max(32) });
+const disconnectParticipantSchema = z.object({
+  roomId: z.string().min(1).max(32),
+  identity: z.string().min(1).max(128),
+});
 
 const musicCommandSchema = z.object({
   roomId: z.string().min(1).max(32),
@@ -167,6 +177,31 @@ function requireSession(request: Request, response: Response, next: NextFunction
 
 function currentUser(response: Response): UserRecord {
   return response.locals.user as UserRecord;
+}
+
+async function refreshMusicBotTextMessage(textChannelId: string): Promise<void> {
+  const existing = getMusicBotTextMessage(textChannelId);
+  const voiceChannelId = existing?.musicCard?.voiceChannelId;
+  if (!existing || !voiceChannelId) return;
+  try {
+    const stateResponse = await fetch(
+      `${config.MUSIC_BOT_INTERNAL_URL}/state?channelId=${encodeURIComponent(voiceChannelId)}`,
+      { signal: AbortSignal.timeout(2_000) },
+    );
+    if (!stateResponse.ok) return;
+    const state = (await stateResponse.json()) as { nowPlaying?: unknown };
+    if (!state.nowPlaying || typeof state.nowPlaying !== 'object') {
+      deleteMusicBotTextMessage(textChannelId);
+      return;
+    }
+    const nowPlaying: MusicNowPlayingCard = {
+      ...(state.nowPlaying as MusicNowPlayingCard),
+      voiceChannelId,
+    };
+    upsertMusicBotTextMessage(textChannelId, existing.text, nowPlaying);
+  } catch {
+    // Worker reiniciando: preserva o último card e tenta de novo no próximo poll.
+  }
 }
 
 function toUserSession(user: UserRecord): UserSession {
@@ -299,6 +334,20 @@ app.get('/api/config', requireSession, (_request, response) => {
   response.json(payload);
 });
 
+app.get('/api/music/thumbnail', requireSession, async (request, response) => {
+  const rawUrl = typeof request.query.url === 'string' ? request.query.url : '';
+  try {
+    const thumbnail = await fetchMusicThumbnail(rawUrl);
+    response.setHeader('Content-Type', thumbnail.contentType);
+    response.setHeader('Cache-Control', 'private, max-age=3600');
+    response.setHeader('Content-Length', thumbnail.body.byteLength);
+    response.send(Buffer.from(thumbnail.body));
+  } catch (error) {
+    console.error('Falha ao carregar thumbnail musical:', error);
+    response.status(502).json({ error: 'N\u00e3o foi poss\u00edvel carregar a capa.' });
+  }
+});
+
 app.get('/api/text-channels', requireSession, (_request, response) => {
   response.json({ channels: listTextChannels() });
 });
@@ -328,12 +377,13 @@ app.post('/api/text-channels', requireSession, textChannelCreateLimiter, (reques
   response.status(201).json({ channel });
 });
 
-app.get('/api/text-channels/:channelId/messages', requireSession, (request, response) => {
+app.get('/api/text-channels/:channelId/messages', requireSession, async (request, response) => {
   const channelId = request.params.channelId;
   if (typeof channelId !== 'string' || !getTextChannelById(channelId)) {
     response.status(404).json({ error: 'Canal de texto não encontrado.' });
     return;
   }
+  await refreshMusicBotTextMessage(channelId);
   response.json({ messages: listTextMessages(channelId) });
 });
 
@@ -392,6 +442,64 @@ app.get('/api/rooms', requireSession, async (_request, response, next) => {
       rooms: config.channels.map((channel) => ({ ...channel, participants: [] })),
       livekitAvailable: false,
     });
+  }
+});
+
+app.post('/api/rooms/:roomId/participants/:identity/disconnect', requireSession, async (request, response) => {
+  const parsed = disconnectParticipantSchema.safeParse({
+    roomId: request.params.roomId,
+    identity: request.params.identity,
+  });
+  const room = parsed.success ? config.channels.find((channel) => channel.id === parsed.data.roomId) : undefined;
+  if (!parsed.success || !room) {
+    response.status(400).json({ error: 'Canal de voz inv\u00e1lido.' });
+    return;
+  }
+  const user = currentUser(response);
+  try {
+    const participants = await roomService.listParticipants(room.id);
+    const authorization = authorizeVoiceDisconnect({
+      roomId: room.id,
+      channels: config.channels,
+      requesterId: user.id,
+      targetIdentity: parsed.data.identity,
+      participantIdentities: participants.map(({ identity }) => identity),
+    });
+    if (!authorization.ok) {
+      if (authorization.reason === 'REQUESTER_NOT_IN_ROOM') {
+        response.status(403).json({ error: 'Você precisa estar nesse canal de voz para desconectar alguém.' });
+      } else if (authorization.reason === 'TARGET_NOT_IN_ROOM') {
+        response.status(404).json({ error: 'Participante não encontrado nesse canal.' });
+      } else {
+        response.status(400).json({ error: 'Canal de voz inválido.' });
+      }
+      return;
+    }
+    const target = participants.find((participant) => participant.identity === parsed.data.identity);
+    if (!target) {
+      response.status(404).json({ error: 'Participante não encontrado nesse canal.' });
+      return;
+    }
+    if (target.identity === MUSIC_BOT_IDENTITY) {
+      const botResponse = await fetch(`${config.MUSIC_BOT_INTERNAL_URL}/disconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: room.id }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!botResponse.ok) {
+        // Fallback: força a remoção no LiveKit; o RoomEvent.Disconnected do bot
+        // limpa a sessão interna do SausiMusic.
+        await roomService.removeParticipant(room.id, target.identity);
+      }
+      deleteMusicBotTextMessagesForVoiceChannel(room.id);
+    } else {
+      await roomService.removeParticipant(room.id, target.identity);
+    }
+    response.status(204).end();
+  } catch (error) {
+    console.error('Falha ao desconectar participante:', error);
+    response.status(503).json({ error: 'N\u00e3o foi poss\u00edvel desconectar o participante.' });
   }
 });
 
@@ -501,14 +609,22 @@ app.post('/api/music/command', requireSession, async (request, response) => {
     const payload: MusicCommandResponse = nowPlaying
       ? { message: botResult.message, nowPlaying }
       : { message: botResult.message };
-    const publishesCard = new Set(['play', 'playlist', 'nowplaying', 'play-file', 'play-local'])
-      .has(authorization.command.command);
-    if (body.data.textChannelId && nowPlaying && publishesCard) {
-      payload.textMessage = createMusicBotTextMessage(
-        body.data.textChannelId,
-        botResult.message,
-        nowPlaying,
-      );
+    if (body.data.textChannelId) {
+      if (nowPlaying) {
+        payload.textMessage = upsertMusicBotTextMessage(
+          body.data.textChannelId,
+          botResult.message,
+          nowPlaying,
+        );
+      } else if (
+        authorization.command.command === 'stop' ||
+        authorization.command.command === 'leave' ||
+        authorization.command.command === 'nowplaying' ||
+        (authorization.command.command === 'skip' && !nowPlaying)
+      ) {
+        const removed = deleteMusicBotTextMessagesForVoiceChannel(authorization.command.channelId);
+        if (removed > 0) payload.removeTextMessage = true;
+      }
     }
     response.json(payload);
   } catch (error) {

@@ -242,6 +242,7 @@ export interface MusicCommandResponse {
   message: string;
   nowPlaying?: MusicNowPlayingCard;
   textMessage?: TextMessage;
+  removeTextMessage?: boolean;
 }
 
 /** Contrato interno usado pela API para encaminhar um comando autenticado ao SausiMusic. */

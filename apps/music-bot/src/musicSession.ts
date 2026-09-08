@@ -92,6 +92,11 @@ export class MusicSession {
     return this.currentTrack ? (this.playback?.positionMs ?? 0) : 0;
   }
 
+
+  snapshot(): MusicNowPlayingCard | undefined {
+    return this.nowPlayingCard();
+  }
+
   execute(request: MusicBotCommandRequest): Promise<MusicCommandResponse> {
     return this.exclusive(async () => {
       switch (request.command) {
@@ -224,7 +229,7 @@ export class MusicSession {
       if (tracks.length === 0) return reply('A playlist não possui faixas reproduzíveis.');
       if (this.currentTrack) {
         this.upcomingTracks.push(...tracks);
-        return reply(`Playlist adicionada à fila: ${tracks.length} faixa(s).`);
+        return reply(`Playlist adicionada à fila: ${tracks.length} faixa(s).`, this.nowPlayingCard());
       }
       const first = tracks.shift()!;
       this.upcomingTracks.push(...tracks);
@@ -255,7 +260,7 @@ export class MusicSession {
         track: track.id,
         position: this.upcomingTracks.length,
       });
-      return reply(`Adicionado à fila: ${track.title}. Posição: ${this.upcomingTracks.length}.`);
+      return reply(`Adicionado à fila: ${track.title}. Posição: ${this.upcomingTracks.length}.`, this.nowPlayingCard());
     }
 
     const started = await this.startTrack(track);
@@ -405,7 +410,7 @@ export class MusicSession {
       track: this.currentTrack.id,
       positionMs: this.positionMs,
     });
-    return reply('Reprodução pausada.');
+    return reply('Reprodução pausada.', this.nowPlayingCard());
   }
 
   private resumeCommand(): MusicCommandResponse {
@@ -420,7 +425,7 @@ export class MusicSession {
       track: this.currentTrack.id,
       positionMs: this.positionMs,
     });
-    return reply('Reprodução retomada.');
+    return reply('Reprodução retomada.', this.nowPlayingCard());
   }
 
   private async skipCommand(): Promise<MusicCommandResponse> {
@@ -486,7 +491,7 @@ export class MusicSession {
       session: this.id,
       volume,
     });
-    return reply(`Volume do SausiMusic ajustado para ${volume}%.`);
+    return reply(`Volume do SausiMusic ajustado para ${volume}%.`, this.nowPlayingCard());
   }
 
   private clearCommand(): MusicCommandResponse {
@@ -497,7 +502,7 @@ export class MusicSession {
       session: this.id,
       cleared,
     });
-    return reply(cleared > 0 ? `Fila limpa. ${cleared} faixa(s) removida(s).` : 'A fila já está vazia.');
+    return reply(cleared > 0 ? `Fila limpa. ${cleared} faixa(s) removida(s).` : 'A fila já está vazia.', this.nowPlayingCard());
   }
 
   private queueCommand(): MusicCommandResponse {
@@ -547,6 +552,11 @@ export class MusicSessionManager {
 
   getSession(channelId: string): MusicSession | undefined {
     return this.sessions.get(channelId);
+  }
+
+
+  snapshot(channelId: string): MusicNowPlayingCard | undefined {
+    return this.sessions.get(channelId)?.snapshot();
   }
 
   async execute(request: MusicBotCommandRequest): Promise<MusicCommandResponse> {

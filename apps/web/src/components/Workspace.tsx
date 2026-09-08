@@ -313,6 +313,8 @@ function ChannelButton({
   ownAvatarUrl,
   onOpenProfile,
   speakingIds,
+  onDisconnectParticipant,
+  disconnectingIdentity,
 }: {
   channel: VoiceChannel;
   summary: RoomSummary | undefined;
@@ -328,6 +330,8 @@ function ChannelButton({
   // conectado agora — o LiveKit não entrega "quem está falando" de salas que
   // você não entrou. Por isso este set só chega preenchido quando `active`.
   speakingIds: Set<string>;
+  onDisconnectParticipant: (identity: string, name: string) => void;
+  disconnectingIdentity: string | null;
 }) {
   return (
     <div className="channel-block">
@@ -361,30 +365,47 @@ function ChannelButton({
       </div>
       {summary?.participants.map((participant) => {
         const isBot = participant.participantType === 'BOT';
+        const canDisconnect = active && participant.identity !== ownIdentity;
         return (
-          <button
-            type="button"
-            className="channel-user"
-            key={participant.identity}
-            disabled={isBot}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenProfile(participant.identity, event);
-            }}
-            title={isBot ? undefined : `Ver perfil de ${participant.name}`}
-          >
-            <ChannelUserAvatar
-              identity={participant.identity}
-              name={participant.name}
-              ownIdentity={ownIdentity}
-              ownAvatarUrl={ownAvatarUrl}
-              speaking={active && speakingIds.has(participant.identity)}
-            />
-            <span className="channel-user-name">{participant.name}</span>
-            {isBot && <span className="bot-badge">BOT</span>}
-            {participant.isSharingScreen && <span className="live-badge live-badge-inline">AO VIVO</span>}
-            {!isBot && participant.isMuted && <MicOffIcon className="channel-user-muted" size={12} />}
-          </button>
+          <div className="channel-user-row" key={participant.identity}>
+            <button
+              type="button"
+              className="channel-user"
+              disabled={isBot}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!isBot) onOpenProfile(participant.identity, event);
+              }}
+              title={isBot ? participant.name : `Ver perfil de ${participant.name}`}
+            >
+              <ChannelUserAvatar
+                identity={participant.identity}
+                name={participant.name}
+                ownIdentity={ownIdentity}
+                ownAvatarUrl={ownAvatarUrl}
+                speaking={active && speakingIds.has(participant.identity)}
+              />
+              <span className="channel-user-name">{participant.name}</span>
+              {isBot && <span className="bot-badge">BOT</span>}
+              {participant.isSharingScreen && <span className="live-badge live-badge-inline">AO VIVO</span>}
+              {!isBot && participant.isMuted && <MicOffIcon className="channel-user-muted" size={12} />}
+            </button>
+            {canDisconnect && (
+              <button
+                type="button"
+                className="channel-user-disconnect"
+                disabled={disconnectingIdentity === participant.identity}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDisconnectParticipant(participant.identity, participant.name);
+                }}
+                title={`Desconectar ${participant.name}`}
+                aria-label={`Desconectar ${participant.name}`}
+              >
+                <LeaveIcon size={12} />
+              </button>
+            )}
+          </div>
         );
       })}
     </div>
@@ -1455,6 +1476,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [rooms, setRooms] = useState<RoomSummary[]>(config.channels.map((channel) => ({ ...channel, participants: [] })));
   const [livekitAvailable, setLivekitAvailable] = useState(true);
   const [joiningId, setJoiningId] = useState<string | null>(null);
+  const [disconnectingIdentity, setDisconnectingIdentity] = useState<string | null>(null);
   const [quality, setQuality] = useState<ShareQuality>('1080p60');
   const [volumes, setVolumes] = useState<Record<string, number>>({});
   const [streamVolumes, setStreamVolumes] = useState<Record<string, number>>({});
@@ -1661,6 +1683,24 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     setJoiningId(null);
   }
 
+
+  async function disconnectParticipantFromVoice(identity: string, name: string) {
+    const roomId = voice.currentChannel?.id;
+    if (!roomId || !voice.connected || disconnectingIdentity) return;
+    if (!window.confirm(`Desconectar ${name} do canal de voz?`)) return;
+    setDisconnectingIdentity(identity);
+    try {
+      await api.disconnectVoiceParticipant(roomId, identity);
+      const result = await api.getRooms();
+      setRooms(result.rooms);
+      setLivekitAvailable(result.livekitAvailable);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : `N?o foi poss?vel desconectar ${name}.`);
+    } finally {
+      setDisconnectingIdentity(null);
+    }
+  }
+
   function handleTextChannelCreated(channel: TextChannel) {
     setTextChannels((current) => current.some(({ id }) => id === channel.id) ? current : [...current, channel]);
     setSelectedTextChannelId(channel.id);
@@ -1852,6 +1892,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
               ownAvatarUrl={session.avatarUrl}
               onOpenProfile={openUserProfile}
               speakingIds={voice.speakers}
+              onDisconnectParticipant={(identity, name) => void disconnectParticipantFromVoice(identity, name)}
+              disconnectingIdentity={disconnectingIdentity}
             />
           ))}
         </nav>

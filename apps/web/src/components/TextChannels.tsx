@@ -205,10 +205,17 @@ export function TextChannelView({
         window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
       } else if (result.response.textMessage) {
         const botMessage = result.response.textMessage;
-        setMessages((current) => current.some(({ id }) => id === botMessage.id)
-          ? current
-          : [...current, botMessage]);
+        setMessages((current) => {
+          const index = current.findIndex(({ id }) => id === botMessage.id);
+          if (index < 0) return [...current, botMessage];
+          const next = [...current];
+          next[index] = botMessage;
+          return next;
+        });
         window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
+      } else if (result.response.removeTextMessage) {
+        setMessages((current) => current.filter(({ senderType }) => senderType !== 'BOT'));
+        setFeedback(result.response);
       } else {
         setFeedback(result.response);
       }
@@ -257,7 +264,17 @@ export function TextChannelView({
                 if (!voiceChannelId) {
                   throw new Error('Você precisa estar em um canal de voz para usar os controles do SausiMusic.');
                 }
-                return api.sendMusicCommand(voiceChannelId, commandText);
+                const response = await api.sendMusicCommand(voiceChannelId, commandText, channel.id);
+                if (response.removeTextMessage) {
+                  setMessages((current) => current.filter(({ senderType }) => senderType !== 'BOT'));
+                } else if (response.textMessage) {
+                  const botMessage = response.textMessage;
+                  setMessages((current) => {
+                    const withoutOldPlayer = current.filter(({ senderType }) => senderType !== 'BOT');
+                    return [...withoutOldPlayer, botMessage].sort((left, right) => left.sentAt - right.sentAt);
+                  });
+                }
+                return response;
               }}
             />
           );

@@ -70,10 +70,21 @@ const listBotMessagesStatement = db.prepare(`
   ORDER BY created_at DESC
   LIMIT ?
 `);
-const insertBotMessageStatement = db.prepare(`
+const upsertBotMessageStatement = db.prepare(`
   INSERT INTO text_bot_messages (id, channel_id, sender_name, text, music_card_json, created_at)
   VALUES (?, ?, ?, ?, ?, ?)
+  ON CONFLICT(channel_id) DO UPDATE SET
+    id = excluded.id,
+    sender_name = excluded.sender_name,
+    text = excluded.text,
+    music_card_json = excluded.music_card_json
 `);
+const deleteBotMessageByChannelStatement = db.prepare('DELETE FROM text_bot_messages WHERE channel_id = ?');
+const listAllBotMessagesStatement = db.prepare(`
+  SELECT id, channel_id, sender_name, text, music_card_json, created_at
+  FROM text_bot_messages
+`);
+const deleteBotMessageByIdStatement = db.prepare('DELETE FROM text_bot_messages WHERE id = ?');
 
 function toChannel(row: TextChannelRow): TextChannel {
   return {
@@ -202,22 +213,56 @@ export function createTextMessage(
 }
 
 
-export function createMusicBotTextMessage(
+export function getMusicBotTextMessage(channelId: string): TextMessage | undefined {
+  const rows = listBotMessagesStatement.all(channelId, 1) as unknown as TextBotMessageRow[];
+  const row = rows[0];
+  return row ? toBotMessage(row) : undefined;
+}
+
+export function deleteMusicBotTextMessage(channelId: string): boolean {
+  const result = deleteBotMessageByChannelStatement.run(channelId);
+  return result.changes > 0;
+}
+
+export function deleteMusicBotTextMessagesForVoiceChannel(
+  voiceChannelId: string,
+  exceptTextChannelId?: string,
+): number {
+  const rows = listAllBotMessagesStatement.all() as unknown as TextBotMessageRow[];
+  let removed = 0;
+  for (const row of rows) {
+    if (row.channel_id === exceptTextChannelId || !row.music_card_json) continue;
+    try {
+      const card = JSON.parse(row.music_card_json) as MusicNowPlayingCard;
+      if (card.voiceChannelId !== voiceChannelId) continue;
+      removed += Number(deleteBotMessageByIdStatement.run(row.id).changes);
+    } catch {
+      // Mensagem antiga/corrompida não deve impedir a limpeza das demais.
+    }
+  }
+  return removed;
+}
+
+export function upsertMusicBotTextMessage(
   channelId: string,
   text: string,
   musicCard: MusicNowPlayingCard,
 ): TextMessage {
+  if (musicCard.voiceChannelId) {
+    deleteMusicBotTextMessagesForVoiceChannel(musicCard.voiceChannelId, channelId);
+  }
+  const existing = getMusicBotTextMessage(channelId);
   const message: TextMessage = {
-    id: randomUUID(),
+    id: `music-bot:${channelId}`,
     channelId,
     senderId: MUSIC_BOT_IDENTITY,
     senderName: MUSIC_BOT_DISPLAY_NAME,
     senderType: 'BOT',
     text,
-    sentAt: Date.now(),
+    sentAt: existing?.sentAt ?? Date.now(),
     musicCard,
   };
-  insertBotMessageStatement.run(
+  upsertBotMessageStatement.run(
     message.id,
     message.channelId,
     message.senderName,

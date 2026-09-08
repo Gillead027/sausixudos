@@ -51,19 +51,32 @@ const sessionManager = new MusicSessionManager(
 );
 
 const server = createServer((request, response) => {
-  if (request.method === 'GET' && request.url === '/health') {
+  const url = new URL(request.url ?? '/', 'http://sausimusic.internal');
+
+  if (request.method === 'GET' && url.pathname === '/health') {
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(
-      JSON.stringify({
-        service: 'sausimusic',
-        status: 'healthy',
-        activeSessions: sessionManager.activeSessions,
-      }),
-    );
+    response.end(JSON.stringify({
+      service: 'sausimusic',
+      status: 'healthy',
+      activeSessions: sessionManager.activeSessions,
+    }));
     return;
   }
 
-  if (request.method !== 'POST' || request.url !== '/command') {
+  if (request.method === 'GET' && url.pathname === '/state') {
+    const channelId = url.searchParams.get('channelId') ?? '';
+    if (!config.channels.some((channel) => channel.id === channelId)) {
+      response.writeHead(400).end();
+      return;
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ nowPlaying: sessionManager.snapshot(channelId) ?? null }));
+    return;
+  }
+
+  const isCommand = request.method === 'POST' && url.pathname === '/command';
+  const isDisconnect = request.method === 'POST' && url.pathname === '/disconnect';
+  if (!isCommand && !isDisconnect) {
     response.writeHead(404).end();
     return;
   }
@@ -84,6 +97,20 @@ const server = createServer((request, response) => {
     void (async () => {
       try {
         const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (isDisconnect) {
+          const channelId = body && typeof body === 'object'
+            ? (body as { channelId?: unknown }).channelId
+            : undefined;
+          if (typeof channelId !== 'string' || !config.channels.some((channel) => channel.id === channelId)) {
+            response.writeHead(400).end();
+            return;
+          }
+          await sessionManager.cleanup(channelId, 'removed-from-voice');
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ disconnected: true }));
+          return;
+        }
+
         if (
           !isMusicBotCommandRequest(body) ||
           !config.channels.some((channel) => channel.id === body.channelId)

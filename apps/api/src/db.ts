@@ -51,6 +51,17 @@ db.exec(`
     ON text_bot_messages(channel_id, created_at DESC);
 `);
 
+// O SausiMusic mantém um único player persistente por canal de texto. Limpa
+// duplicatas deixadas pela versão anterior antes de aplicar a unicidade.
+db.exec(`
+  DELETE FROM text_bot_messages
+  WHERE rowid NOT IN (
+    SELECT MAX(rowid) FROM text_bot_messages GROUP BY channel_id
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_text_bot_messages_channel_unique
+    ON text_bot_messages(channel_id);
+`);
+
 db.prepare(
   `INSERT OR IGNORE INTO text_channels (id, name, description, created_by, created_at)
    VALUES ('geral', 'geral', 'Conversa geral da comunidade', NULL, ?)`,
