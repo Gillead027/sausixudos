@@ -66,6 +66,7 @@ import {
 import { ProfilePopover, type ProfilePopoverTarget } from './ProfilePopover';
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
+import { ServerSettings } from './ServerSettings';
 import { CreateTextChannelDialog, TextChannelView } from './TextChannels';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
@@ -130,6 +131,7 @@ declare global {
       openMediaSettings: (mediaType: 'camera' | 'microphone') => Promise<boolean>;
       onActivityChanged?: (listener: (activity: Activity | null) => void) => (() => void);
       getCurrentActivity?: () => Promise<Activity | null>;
+      windowAction?: (action: 'minimize' | 'toggle-maximize' | 'close') => void;
     };
   }
 }
@@ -872,17 +874,24 @@ function SettingsModal({
       <div className="settings-modal" ref={modalRef}>
         <nav className="settings-nav">
           <span className="settings-nav-title">Configurações</span>
-          <span className="settings-nav-group">Conta</span>
+          <span className="settings-nav-group">Sua conta</span>
           <button ref={firstNavigationButtonRef} type="button" className={section === 'profile' ? 'active' : ''} onClick={() => setSection('profile')}>
             <UserIcon size={15} /> Meu perfil
           </button>
-          <span className="settings-nav-group">Preferências</span>
-          <button type="button" className={section === 'appearance' ? 'active' : ''} onClick={() => setSection('appearance')}>
-            <PaletteIcon size={15} /> Aparência
-          </button>
+          <button type="button"><span className="nav-glyph">▣</span> Conta e segurança</button>
+          <button type="button"><span className="nav-glyph">◈</span> Privacidade</button>
+          <span className="settings-nav-group">Configurações do app</span>
           <button type="button" className={section === 'voice' ? 'active' : ''} onClick={() => setSection('voice')}>
             <VoiceIcon size={15} /> Voz e vídeo
           </button>
+          <button type="button" className={section === 'appearance' ? 'active' : ''} onClick={() => setSection('appearance')}>
+            <PaletteIcon size={15} /> Aparência
+          </button>
+          <button type="button"><span className="nav-glyph">♧</span> Notificações</button>
+          <button type="button"><span className="nav-glyph">⌨</span> Atalhos</button>
+          <button type="button"><span className="nav-glyph">文</span> Idioma</button>
+          <button type="button"><span className="nav-glyph">▧</span> Arquivos e mídia</button>
+          <button type="button"><span className="nav-glyph">⚙</span> Avançado</button>
           <span className="settings-nav-divider" />
           <button type="button" className="settings-nav-signout" onClick={onSignOut}>
             <LeaveIcon size={15} /> Sair da conta
@@ -894,6 +903,7 @@ function SettingsModal({
             <div className="settings-pane two-column">
               <div className="settings-pane-main">
                 <h2>Meu perfil</h2>
+                <p className="settings-page-description">Personalize como seu perfil aparece para outras pessoas.</p>
                 <label className="settings-label">Banner do perfil</label>
                 <div className="profile-banner-field">
                   {profileBanner && <img src={profileBanner} alt="" />}
@@ -933,6 +943,9 @@ function SettingsModal({
                 </div>
                 {avatarError && <p className="settings-hint">{avatarError}</p>}
                 <p className="settings-hint">Recomendado: 512×512. Máximo 300KB (redimensionado automaticamente).</p>
+
+                <label htmlFor="profile-display-name">Nome de exibição</label>
+                <input id="profile-display-name" readOnly value={session.displayName} />
 
                 <label htmlFor="profile-status">Status<span className="field-char-count">{profileStatus.length}/60</span></label>
                 <input
@@ -1006,7 +1019,7 @@ function SettingsModal({
             <div className="settings-pane two-column">
               <div className="settings-pane-main">
                 <div className="settings-pane-heading-row">
-                  <h2>Voz e vídeo</h2>
+                  <div><h2>Voz e vídeo</h2><p className="settings-page-description">Configure seus dispositivos de áudio e vídeo.</p></div>
                   <label className="settings-search" aria-label="Buscar nas configurações">
                     <SearchIcon size={14} />
                     <input
@@ -1255,6 +1268,7 @@ function SettingsModal({
             <div className="settings-pane two-column">
               <div className="settings-pane-main">
                 <h2>Aparência</h2>
+                <p className="settings-page-description">Personalize a aparência do Sausixudos no seu dispositivo.</p>
 
                 <span className="settings-label">Tema</span>
                 <div className="theme-cards" role="group" aria-label="Tema">
@@ -1457,6 +1471,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const openUserProfile = (userId: string, event: { currentTarget: HTMLElement }) =>
     setProfileTarget({ userId, rect: event.currentTarget.getBoundingClientRect() });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [textChannels, setTextChannels] = useState<TextChannel[]>([]);
   const [selectedTextChannelId, setSelectedTextChannelId] = useState<string | null>(null);
@@ -1757,6 +1772,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         onCreated={handleTextChannelCreated}
         returnFocusRef={createTextChannelButtonRef}
       />
+      <ServerSettings open={serverSettingsOpen} onClose={() => setServerSettingsOpen(false)} />
       {voice.connected && (
         <VoiceAudioSinks
           participants={typedParticipants}
@@ -1768,8 +1784,9 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
       )}
       <ProfilePopover target={profileTarget} ownSession={session} onClose={() => setProfileTarget(null)} />
       <aside className="server-rail" aria-label="Servidores">
-        <button className="server-button home active" type="button" title="Sausixudos" aria-label="Sausixudos">S</button>
+        <button className="server-button home" type="button" title="Início" aria-label="Início"><span className="brand-mark compact" aria-hidden="true"><i /><i /></span></button>
         <span className="rail-divider" />
+        <button className="server-button server-current active" type="button" title="Lobby dos amigos" aria-label="Lobby dos amigos">S</button>
         <button className="server-button add" type="button" title="Adicionar servidor" aria-label="Adicionar servidor" disabled>
           <PlusIcon size={18} />
         </button>
@@ -1777,8 +1794,10 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
 
       <aside className="sidebar">
         <header className="sidebar-header">
-          <strong>Lobby dos amigos</strong>
-          <ChevronIcon size={16} />
+          <button type="button" className="server-menu-trigger" onClick={() => setServerSettingsOpen(true)} aria-label="Abrir configurações do servidor">
+            <strong>Lobby dos amigos</strong>
+            <ChevronIcon size={16} />
+          </button>
         </header>
 
         <nav className="channels" aria-label="Canais do servidor">
@@ -1941,6 +1960,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           </div>
           {!activeTextChannel && (
             <div className="room-header-actions">
+              <button type="button" className="icon-button" title="Mensagens fixadas" aria-label="Mensagens fixadas"><span className="header-glyph">⌖</span></button>
+              <button type="button" className="icon-button" title="Mostrar membros" aria-label="Mostrar membros"><UserIcon size={17} /></button>
               <div className={`connection-state ${voice.connected ? 'online' : ''}`}><span />{connectionLabel}</div>
               {voice.connected && (
                 <button
@@ -2012,9 +2033,10 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                   />
                 ) : (
                   <div className="voice-idle-stage">
-                    <VoiceIcon size={26} />
+                    <div className="idle-voice-orb"><VoiceIcon size={42} /></div>
                     <h2>Você está em {voice.currentChannel?.name}</h2>
-                    <p>Ninguém está compartilhando tela agora.</p>
+                    <p>Conectado ao canal de voz. Seus amigos podem ouvir você.</p>
+                    <span className="idle-stage-tip">Converse com seus amigos</span>
                   </div>
                 )
               ) : (
@@ -2028,47 +2050,34 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
 
             {voice.connected && (
               <div className="voice-toolbar" aria-label="Controles de voz">
+                <div className="voice-split-action">
+                  <button className={`voice-action ${!voice.micEnabled ? 'danger' : ''}`} type="button" onClick={() => void voice.toggleMicrophone()} disabled={voice.deafened} title={voice.micEnabled ? 'Desligar microfone' : 'Ligar microfone'} aria-label={voice.micEnabled ? 'Desligar microfone' : 'Ligar microfone'}>
+                    <IconSwap on={voice.micEnabled} onIcon={<MicIcon />} offIcon={<MicOffIcon />} />
+                  </button>
+                  <DeviceMenu devices={voice.audioInputs} selectedId={voice.selectedMicId} onSelect={(deviceId) => void voice.setMicrophoneDevice(deviceId)} label="Escolher microfone" />
+                </div>
+                <div className="voice-split-action">
+                  <button className={`voice-action ${voice.deafened ? 'danger' : ''}`} type="button" onClick={() => void voice.toggleDeafen()} title={voice.deafened ? 'Ativar áudio' : 'Desativar áudio'} aria-label={voice.deafened ? 'Ativar áudio' : 'Desativar áudio'}>
+                    <IconSwap on={!voice.deafened} onIcon={<HeadphonesIcon />} offIcon={<HeadphonesOffIcon />} />
+                  </button>
+                  <DeviceMenu devices={voice.audioOutputs} selectedId={voice.selectedSpeakerId} onSelect={(deviceId) => void voice.setSpeakerDevice(deviceId)} label="Escolher saída de áudio" />
+                </div>
+                <div className="voice-split-action">
+                  <button className={`voice-action ${voice.cameraEnabled ? 'sharing' : ''}`} type="button" onClick={() => void voice.toggleCamera()} title={voice.cameraEnabled ? 'Desligar câmera' : 'Ligar câmera'} aria-label={voice.cameraEnabled ? 'Desligar câmera' : 'Ligar câmera'}>
+                    <IconSwap on={voice.cameraEnabled} onIcon={<CameraIcon />} offIcon={<CameraOffIcon />} />
+                  </button>
+                  <button type="button" className="device-menu-chevron" aria-label="Opções de câmera"><ChevronIcon size={12} /></button>
+                </div>
                 <button
-                  className={`voice-action ${!voice.micEnabled ? 'danger' : ''}`}
-                  type="button"
-                  onClick={() => void voice.toggleMicrophone()}
-                  disabled={voice.deafened}
-                  title={voice.micEnabled ? 'Desligar microfone' : 'Ligar microfone'}
-                  aria-label={voice.micEnabled ? 'Desligar microfone' : 'Ligar microfone'}
-                >
-                  <IconSwap on={voice.micEnabled} onIcon={<MicIcon />} offIcon={<MicOffIcon />} />
-                </button>
-                <button
-                  className={`voice-action ${voice.deafened ? 'danger' : ''}`}
-                  type="button"
-                  onClick={() => void voice.toggleDeafen()}
-                  title={voice.deafened ? 'Ativar áudio' : 'Desativar áudio'}
-                  aria-label={voice.deafened ? 'Ativar áudio' : 'Desativar áudio'}
-                >
-                  <IconSwap on={!voice.deafened} onIcon={<HeadphonesIcon />} offIcon={<HeadphonesOffIcon />} />
-                </button>
-                <span className="toolbar-divider" />
-                <button
-                  className={`voice-action ${voice.cameraEnabled ? 'sharing' : ''}`}
-                  type="button"
-                  onClick={() => void voice.toggleCamera()}
-                  title={voice.cameraEnabled ? 'Desligar câmera' : 'Ligar câmera'}
-                  aria-label={voice.cameraEnabled ? 'Desligar câmera' : 'Ligar câmera'}
-                >
-                  <IconSwap on={voice.cameraEnabled} onIcon={<CameraIcon />} offIcon={<CameraOffIcon />} />
-                </button>
-                <button
-                  className={`voice-action wide ${voice.screenEnabled ? 'sharing' : ''}`}
+                  className={`voice-action ${voice.screenEnabled ? 'sharing' : ''}`}
                   type="button"
                   onClick={() => void startOrStopScreenShare()}
                   title={voice.screenEnabled ? 'Parar transmissão' : 'Compartilhar tela'}
                 >
                   <ShareIcon />
-                  <span>{voice.screenEnabled ? 'Parar transmissão' : 'Compartilhar tela'}</span>
                 </button>
                 <button className="voice-action leave" type="button" onClick={() => void voice.disconnect()} title="Sair do canal">
                   <LeaveIcon />
-                  <span>Sair</span>
                 </button>
               </div>
             )}

@@ -21,6 +21,7 @@ export interface SharePickerChoice {
 export type MediaAccessStatus = 'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown';
 
 contextBridge.exposeInMainWorld('desktop', {
+  windowAction: (action: 'minimize' | 'toggle-maximize' | 'close'): void => ipcRenderer.send('window:action', action),
   chooseShareSource: (): Promise<SharePickerChoice | null> => ipcRenderer.invoke('share-picker:open'),
   setZoomFactor: (factor: number): void => ipcRenderer.send('set-zoom-factor', Number(factor)),
   setFullscreen: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('window:set-fullscreen', Boolean(enabled)),

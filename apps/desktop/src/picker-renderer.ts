@@ -13,6 +13,7 @@ declare global {
 const list = document.querySelector<HTMLDivElement>('#source-list');
 const status = document.querySelector<HTMLParagraphElement>('#status');
 const cancelButton = document.querySelector<HTMLButtonElement>('#cancel');
+const closeButton = document.querySelector<HTMLButtonElement>('#picker-close');
 const confirmButton = document.querySelector<HTMLButtonElement>('#confirm');
 const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
 const resolutionSelect = document.querySelector<HTMLSelectElement>('#quality-resolution');
@@ -96,6 +97,7 @@ resolutionSelect?.addEventListener('change', syncFpsForResolution);
 syncFpsForResolution();
 
 cancelButton?.addEventListener('click', () => void window.capturePicker.cancel());
+closeButton?.addEventListener('click', () => void window.capturePicker.cancel());
 confirmButton?.addEventListener('click', () => {
   if (!selectedId) return;
   if (confirmButton) confirmButton.disabled = true;

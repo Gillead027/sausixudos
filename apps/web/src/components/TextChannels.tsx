@@ -9,7 +9,7 @@ import {
 } from '@sausixudos/shared';
 import { api } from '../api';
 import { routeTextChannelInput } from '../musicCommandRouting';
-import { CloseIcon, MessageIcon } from './Icons';
+import { CloseIcon, MessageIcon, SearchIcon, VoiceIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 
@@ -342,13 +342,25 @@ export function CreateTextChannelDialog({
       >
         <header>
           <div>
-            <h2 id={titleId}>Criar canal de texto</h2>
-            <p id={descriptionId}>O canal ficará disponível para todos no servidor.</p>
+            <h2 id={titleId}>Criar canal</h2>
+            <p id={descriptionId}>Configure o novo espaço do seu servidor.</p>
           </div>
           <button type="button" onClick={close} disabled={saving} aria-label="Fechar">
             <CloseIcon size={18} />
           </button>
         </header>
+        <label>Tipo de canal</label>
+        <div className="channel-type-grid" aria-label="Tipo de canal">
+          <button type="button" className="channel-type-card selected">
+            <MessageIcon size={21} /><span><strong>Texto</strong><small>Envie mensagens, imagens e arquivos</small></span><i>✓</i>
+          </button>
+          <button type="button" className="channel-type-card">
+            <VoiceIcon size={21} /><span><strong>Voz</strong><small>Converse por voz e vídeo</small></span>
+          </button>
+          <button type="button" className="channel-type-card">
+            <span className="forum-glyph">▤</span><span><strong>Fórum</strong><small>Discussões organizadas por tópicos</small></span>
+          </button>
+        </div>
         <label htmlFor="channel-name">Nome do canal</label>
         <div className="channel-name-field">
           <span aria-hidden="true">#</span>
@@ -372,6 +384,16 @@ export function CreateTextChannelDialog({
           onChange={(event) => setDescription(event.target.value)}
           placeholder="Sobre o que é este canal?"
         />
+        <div className="channel-static-option">
+          <div><strong>Canal privado</strong><span>Somente membros e cargos selecionados poderão acessar.</span></div>
+          <button type="button" className="settings-switch" aria-label="Canal privado" />
+        </div>
+        <label>Quem pode acessar?</label>
+        <div className="channel-access-search"><SearchIcon size={15} /><input readOnly placeholder="Buscar cargos ou membros" /></div>
+        <div className="channel-access-list">
+          <div><span className="access-avatar everyone">@</span><p><strong>@everyone</strong><small>Todos os membros do servidor</small></p><i>✓</i></div>
+          <div><span className="access-avatar friends">A</span><p><strong>Amigo</strong><small>7 membros</small></p><i>✓</i></div>
+        </div>
         {error && <p id={errorId} className="form-error" role="alert">{error}</p>}
         <footer>
           <button type="button" className="dialog-cancel" onClick={close} disabled={saving}>Cancelar</button>

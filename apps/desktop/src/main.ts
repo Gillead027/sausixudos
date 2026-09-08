@@ -187,6 +187,13 @@ function installPickerIpc(): void {
     mainWindow.webContents.setZoomFactor(factor);
   });
 
+  ipcMain.on('window:action', (event, action: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    if (action === 'minimize') mainWindow.minimize();
+    else if (action === 'toggle-maximize') mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+    else if (action === 'close') mainWindow.close();
+  });
+
   ipcMain.handle('share-picker:open', async (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return null;
     const sources = await desktopCapturer.getSources({
@@ -245,13 +252,14 @@ async function chooseCaptureSource(sources: DesktopCapturerSource[]): Promise<Ca
 
   return new Promise((resolve) => {
     const picker = new BrowserWindow({
-      width: 820,
-      height: 560,
-      minWidth: 640,
-      minHeight: 420,
+      width: 886,
+      height: 783,
+      minWidth: 760,
+      minHeight: 620,
       ...(mainWindow ? { parent: mainWindow } : {}),
       modal: Boolean(mainWindow),
       show: false,
+      frame: false,
       title: 'Compartilhar tela — Sausixudos',
       backgroundColor: '#111315',
       autoHideMenuBar: true,
@@ -448,6 +456,7 @@ function createMainWindow(appUrl: URL): BrowserWindow {
     minWidth: 1280,
     minHeight: 720,
     show: false,
+    frame: false,
     title: 'Sausixudos',
     backgroundColor: '#111315',
     autoHideMenuBar: true,

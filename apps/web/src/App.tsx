@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import type { PublicConfig, UserSession } from '@sausixudos/shared';
 import { api } from './api';
 import { EntryScreen } from './components/EntryScreen';
+import { AppFrame } from './components/AppChrome';
 
 const Workspace = lazy(() =>
   import('./components/Workspace').then((module) => ({ default: module.Workspace })),
@@ -56,23 +57,23 @@ export function App() {
     };
   }, []);
 
-  if (state.status === 'loading') return <LoadingWindow label="Carregando usuário…" />;
-  if (state.status === 'signed-out') return <EntryScreen onAuthenticated={loadAuthenticatedApp} />;
+  if (state.status === 'loading') return <AppFrame><LoadingWindow label="Carregando usuário…" /></AppFrame>;
+  if (state.status === 'signed-out') return <AppFrame><EntryScreen onAuthenticated={loadAuthenticatedApp} /></AppFrame>;
 
   if (state.status === 'error') {
     return (
-      <main className="splash error-page">
+      <AppFrame><main className="splash error-page">
         <h1>Não foi possível iniciar</h1>
         <p>{state.message}</p>
         <button className="primary-button" onClick={() => window.location.reload()}>
           Tentar novamente
         </button>
-      </main>
+      </main></AppFrame>
     );
   }
 
   return (
-    <Suspense fallback={<LoadingWindow label="Carregando interface…" />}>
+    <AppFrame><Suspense fallback={<LoadingWindow label="Carregando interface…" />}>
       <Workspace
         session={state.session}
         config={state.config}
@@ -84,6 +85,6 @@ export function App() {
           setState((current) => (current.status === 'ready' ? { ...current, session } : current))
         }
       />
-    </Suspense>
+    </Suspense></AppFrame>
   );
 }

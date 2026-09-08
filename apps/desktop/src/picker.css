@@ -47,3 +47,39 @@ footer button { min-width: 96px; height: 36px; padding: 0 16px; border: 0; borde
 .btn-primary { color: #f4f6f4; background: #4e7960; }
 .btn-primary:hover:not(:disabled) { background: #5a896c; }
 .btn-primary:disabled { opacity: .5; cursor: default; }
+
+/* As regras-base acima são mantidas para compatibilidade; este bloco final
+   aplica as medidas e cores da referência visual. */
+:root { color: #f2f1f8; background: #111620; }
+body { border: 1px solid #343c50; border-radius: 20px; overflow: hidden; background: #111620; }
+header { position: relative; gap: 15px; padding: 24px 27px 20px; border-bottom: 0; background: #141925; -webkit-app-region: drag; }
+.picker-icon { width: 43px; height: 43px; border: 1px solid #453e71; border-radius: 13px; color: #a69dff; background: #24203e; font-size: 21px; }
+h1 { font-size: 20px; letter-spacing: -.3px; }
+p { margin-top: 5px; color: #7f8599; font-size: 11px; }
+#picker-close { position: absolute; top: 22px; right: 23px; width: 32px; height: 32px; border: 0; border-radius: 9px; color: #858ba0; background: transparent; cursor: pointer; font: inherit; font-size: 22px; -webkit-app-region: no-drag; }
+#picker-close:hover { color: #fff; background: #252c3a; }
+.tabs { gap: 23px; padding: 0 27px; border-bottom-color: #293143; background: #141925; }
+.tab { height: 43px; padding: 0 2px; color: #7e8498; font-size: 11px; }
+.tab.active { color: #f0eff8; border-bottom-color: #8075f2; }
+main { align-content: start; gap: 12px; padding: 19px 27px; background: #111620; }
+.source { border: 1px solid #2e3649; border-radius: 13px; background: #151b27; }
+.source:hover { background: #1b2230; }
+.source.selected { border: 2px solid #8176f2; background: #1e1d35; box-shadow: 0 0 0 2px rgba(129,118,242,.14); }
+.source img { background: #0d111a; }
+.source > span { padding: 9px 11px 10px; }
+.source strong { font-size: 10px; }
+.source small { color: #747b90; font-size: 8px; }
+.options { gap: 13px; padding: 17px 27px; border-top-color: #293143; background: #111620; }
+.options > label { color: #8c92a6; font-size: 9px; }
+.options select { min-width: 112px; height: 38px; padding: 0 11px; border-color: #343d51; border-radius: 9px; background: #0e131d; font-size: 11px; }
+.options-toggle strong { font-size: 10px; }
+.options-toggle small { color: #747b90; font-size: 8px; }
+.options-toggle input[type="checkbox"] { width: 39px; height: 22px; background: #343d50; }
+.options-toggle input[type="checkbox"]::after { width: 18px; height: 18px; }
+.options-toggle input[type="checkbox"]:checked { background: #786ded; }
+.options-toggle input[type="checkbox"]:checked::after { transform: translateX(17px); }
+footer { padding: 17px 27px; border-top-color: #293143; background: #0e131d; }
+footer button { min-width: 105px; height: 39px; border-radius: 9px; font-size: 11px; }
+.btn-secondary { color: #bdc0cd; background: #202737; }
+.btn-primary { background: #dd607b; }
+.btn-primary:hover:not(:disabled) { background: #ec6d87; }
