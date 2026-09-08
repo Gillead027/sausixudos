@@ -129,6 +129,7 @@ declare global {
       getMediaAccessStatus: (mediaType: 'camera' | 'microphone') => Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'>;
       openMediaSettings: (mediaType: 'camera' | 'microphone') => Promise<boolean>;
       onActivityChanged?: (listener: (activity: Activity | null) => void) => (() => void);
+      getCurrentActivity?: () => Promise<Activity | null>;
     };
   }
 }

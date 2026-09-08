@@ -39,4 +39,5 @@ contextBridge.exposeInMainWorld('desktop', {
     ipcRenderer.on('activity:changed', wrapped);
     return () => ipcRenderer.removeListener('activity:changed', wrapped);
   },
+  getCurrentActivity: (): Promise<Activity | null> => ipcRenderer.invoke('activity:get-current'),
 });

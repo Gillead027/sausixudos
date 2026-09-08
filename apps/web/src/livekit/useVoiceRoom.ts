@@ -511,6 +511,11 @@ export function useVoiceRoom() {
   );
 
   useEffect(() => {
+    // A primeira detecção pode acontecer antes deste efeito montar (ex.:
+    // alguém que já estava com o Spotify tocando antes mesmo da janela
+    // abrir) — nesse caso o "push" via onActivityChanged já passou e se
+    // perdeu no ar, então também puxamos o valor atual explicitamente aqui.
+    void window.desktop?.getCurrentActivity?.().then((activity) => applyActivity(activity ?? null));
     return window.desktop?.onActivityChanged?.(applyActivity);
   }, [applyActivity]);
 

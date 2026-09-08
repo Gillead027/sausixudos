@@ -12,6 +12,7 @@ import {
 } from 'electron';
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { Activity } from '@sausixudos/shared';
 import { initAutoUpdater } from './updater.js';
 
 // windows-media-sessions calcula o caminho do próprio backend nativo relativo
@@ -89,6 +90,12 @@ interface PendingCapture {
 let mainWindow: BrowserWindow | null = null;
 let pendingCapture: PendingCapture | null = null;
 let stopActivityMonitor: (() => void) | null = null;
+// A detecção roda e já pode publicar a primeira atividade (ex.: alguém que
+// já estava com o Spotify tocando antes mesmo da janela abrir) antes do
+// React montar e registrar o listener de IPC — esse push inicial se perderia
+// no ar. Guardar aqui permite o renderer puxar o valor atual assim que
+// estiver pronto, em vez de depender só do push de mudanças futuras.
+let currentActivity: Activity | null = null;
 // Fonte já escolhida pelo usuário via o botão "Compartilhar tela" do app (fluxo
 // proativo, ver share-picker:open) — quando presente, o handler de getDisplayMedia
 // a usa direto em vez de abrir o picker de novo reagindo à chamada do navegador.
@@ -225,6 +232,11 @@ function installPickerIpc(): void {
       : 'ms-settings:privacy-microphone';
     await shell.openExternal(settingsUrl);
     return true;
+  });
+
+  ipcMain.handle('activity:get-current', (event) => {
+    if (event.sender !== mainWindow?.webContents) return null;
+    return currentActivity;
   });
 }
 
@@ -556,6 +568,7 @@ if (hasSingleInstanceLock) {
       });
       const { startActivityMonitor } = await import('./activity.js');
       stopActivityMonitor = startActivityMonitor((activity) => {
+        currentActivity = activity;
         if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
           mainWindow.webContents.send('activity:changed', activity);
         }
