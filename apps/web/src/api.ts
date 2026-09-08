@@ -1,6 +1,7 @@
 import type {
   AccentColor,
   LiveKitTokenResponse,
+  MusicCommandResponse,
   PublicConfig,
   RoomSummary,
   TextChannel,
@@ -57,8 +58,9 @@ export const api = {
       body: JSON.stringify({ accentColor, statusText, bio, pronouns, avatarUrl, bannerUrl }),
     }),
   getUserAvatar: (userId: string) => request<{ avatarUrl: string }>(`/api/users/${userId}/avatar`),
+  getUserProfile: (userId: string) => request<{ user: UserSession }>(`/api/users/${userId}/profile`),
   sendMusicCommand: (roomId: string, text: string) =>
-    request<void>('/api/music/command', {
+    request<MusicCommandResponse>('/api/music/command', {
       method: 'POST',
       body: JSON.stringify({ roomId, text }),
     }),

@@ -63,6 +63,7 @@ import {
   UserIcon,
   VoiceIcon,
 } from './Icons';
+import { ProfilePopover, type ProfilePopoverTarget } from './ProfilePopover';
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
 import { CreateTextChannelDialog, TextChannelView } from './TextChannels';
@@ -140,7 +141,7 @@ function avatarColorIndex(name: string): number {
   return index % ACCENT_COLORS.length;
 }
 
-function Avatar({
+export function Avatar({
   name,
   accentColor,
   avatarUrl,
@@ -296,6 +297,7 @@ function ChannelButton({
   onToggleChat,
   ownIdentity,
   ownAvatarUrl,
+  onOpenProfile,
 }: {
   channel: VoiceChannel;
   summary: RoomSummary | undefined;
@@ -306,6 +308,7 @@ function ChannelButton({
   onToggleChat: () => void;
   ownIdentity: string;
   ownAvatarUrl: string;
+  onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
 }) {
   return (
     <div className="channel-block">
@@ -337,19 +340,32 @@ function ChannelButton({
           </button>
         )}
       </div>
-      {summary?.participants.map((participant) => (
-        <div className="channel-user" key={participant.identity}>
-          <ChannelUserAvatar
-            identity={participant.identity}
-            name={participant.name}
-            ownIdentity={ownIdentity}
-            ownAvatarUrl={ownAvatarUrl}
-          />
-          <span className="channel-user-name">{participant.name}</span>
-          {participant.participantType === 'BOT' && <span className="bot-badge">BOT</span>}
-          {participant.isSharingScreen && <span className="live-badge live-badge-inline">AO VIVO</span>}
-        </div>
-      ))}
+      {summary?.participants.map((participant) => {
+        const isBot = participant.participantType === 'BOT';
+        return (
+          <button
+            type="button"
+            className="channel-user"
+            key={participant.identity}
+            disabled={isBot}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenProfile(participant.identity, event);
+            }}
+            title={isBot ? undefined : `Ver perfil de ${participant.name}`}
+          >
+            <ChannelUserAvatar
+              identity={participant.identity}
+              name={participant.name}
+              ownIdentity={ownIdentity}
+              ownAvatarUrl={ownAvatarUrl}
+            />
+            <span className="channel-user-name">{participant.name}</span>
+            {isBot && <span className="bot-badge">BOT</span>}
+            {participant.isSharingScreen && <span className="live-badge live-badge-inline">AO VIVO</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -361,6 +377,7 @@ function ParticipantRow({
   setVolume,
   accentColor,
   ownAvatarUrl,
+  onOpenProfile,
 }: {
   participant: LocalParticipant | RemoteParticipant;
   speaking: boolean;
@@ -368,6 +385,7 @@ function ParticipantRow({
   setVolume: (value: number) => void;
   accentColor?: AccentColor | undefined;
   ownAvatarUrl: string;
+  onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
 }) {
   const name = participant.name || participant.identity;
   const local = participant instanceof LocalParticipant;
@@ -380,7 +398,13 @@ function ParticipantRow({
 
   return (
     <div className={`participant-row ${speaking ? 'active-speaker' : ''}`}>
-      <div className="participant-main">
+      <button
+        type="button"
+        className="participant-main"
+        disabled={isBot}
+        onClick={(event) => onOpenProfile(participant.identity, event)}
+        title={isBot ? undefined : `Ver perfil de ${name}`}
+      >
         <Avatar name={name} accentColor={accentColor} avatarUrl={avatarUrl} speaking={speaking} compact />
         <div className="participant-copy">
           <strong>
@@ -391,7 +415,7 @@ function ParticipantRow({
           <span>{speaking ? (isBot ? 'Tocando' : 'Falando') : isBot ? 'Ocioso' : muted ? 'Microfone desligado' : 'Conectado'}</span>
         </div>
         {muted && <MicOffIcon className="participant-muted" size={14} />}
-      </div>
+      </button>
       {!local && (
         <label className="volume-control" title={`Volume de ${name}: ${volume}%`}>
           <span>Vol.</span>
@@ -1409,6 +1433,9 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   // em algum ambiente.
   const [allowListenWhileSharing, setAllowListenWhileSharing] = useState(true);
   const [chatText, setChatText] = useState('');
+  const [profileTarget, setProfileTarget] = useState<ProfilePopoverTarget | null>(null);
+  const openUserProfile = (userId: string, event: { currentTarget: HTMLElement }) =>
+    setProfileTarget({ userId, rect: event.currentTarget.getBoundingClientRect() });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [textChannels, setTextChannels] = useState<TextChannel[]>([]);
@@ -1625,6 +1652,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         setVolume={(value) => setVolumes((current) => ({ ...current, [participant.identity]: value }))}
         accentColor={participantAccentColor(participant, session.accentColor)}
         ownAvatarUrl={session.avatarUrl}
+        onOpenProfile={openUserProfile}
       />
     );
   }
@@ -1719,6 +1747,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           deafened={voice.deafened || (voice.shareAudioActive && !allowListenWhileSharing)}
         />
       )}
+      <ProfilePopover target={profileTarget} ownSession={session} onClose={() => setProfileTarget(null)} />
       <aside className="server-rail" aria-label="Servidores">
         <button className="server-button home active" type="button" title="Sausixudos" aria-label="Sausixudos">S</button>
         <span className="rail-divider" />
@@ -1782,6 +1811,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
               onToggleChat={() => setChatOpen((open) => !open)}
               ownIdentity={session.id}
               ownAvatarUrl={session.avatarUrl}
+              onOpenProfile={openUserProfile}
             />
           ))}
         </nav>
@@ -1913,6 +1943,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
             session={session}
             messageStyle={messageStyle}
             voiceChannelId={voice.currentChannel?.id ?? null}
+            onOpenProfile={openUserProfile}
           />
         ) : (
         <>
@@ -2048,15 +2079,33 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                   message.sentAt - previous.sentAt < 5 * 60 * 1000;
                 const senderAvatar =
                   message.senderId === session.id ? session.avatarUrl : remoteAvatarCache.get(message.senderId);
+                const isBotMessage = message.senderId === MUSIC_BOT_IDENTITY;
                 return (
                   <article className={`message ${continued ? 'continued' : ''}`} key={message.id}>
-                    <Avatar name={message.senderName} avatarUrl={senderAvatar} compact />
+                    {isBotMessage ? (
+                      <Avatar name={message.senderName} avatarUrl={senderAvatar} compact />
+                    ) : (
+                      <button
+                        type="button"
+                        className="message-avatar-trigger"
+                        onClick={(event) => openUserProfile(message.senderId, event)}
+                        title={`Ver perfil de ${message.senderName}`}
+                      >
+                        <Avatar name={message.senderName} avatarUrl={senderAvatar} compact />
+                      </button>
+                    )}
                     <div>
                       <header>
-                        <strong>
-                          {message.senderName}
-                          {message.senderId === MUSIC_BOT_IDENTITY && <span className="bot-badge">BOT</span>}
-                        </strong>
+                        {isBotMessage ? (
+                          <strong>
+                            {message.senderName}
+                            <span className="bot-badge">BOT</span>
+                          </strong>
+                        ) : (
+                          <button type="button" className="message-name-trigger" onClick={(event) => openUserProfile(message.senderId, event)}>
+                            {message.senderName}
+                          </button>
+                        )}
                         <time>{new Date(message.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time>
                       </header>
                       <p>{message.text}</p>

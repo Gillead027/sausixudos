@@ -8,6 +8,7 @@ import {
   type UserSession,
 } from '@sausixudos/shared';
 import { api } from '../api';
+import { routeTextChannelInput } from '../musicCommandRouting';
 import { CloseIcon, MessageIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
@@ -37,21 +38,32 @@ function TextMessageRow({
   message,
   continued,
   session,
+  onOpenProfile,
 }: {
   message: TextMessage;
   continued: boolean;
   session: UserSession;
+  onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
 }) {
   const avatarUrl = useTextAvatar(message.senderId, session);
   const initial = message.senderName.trim().charAt(0).toUpperCase() || '?';
   return (
     <article className={`message text-message ${continued ? 'continued' : ''}`}>
-      <span className="text-message-avatar" aria-hidden="true">
-        {avatarUrl ? <img src={avatarUrl} alt="" /> : initial}
-      </span>
+      <button
+        type="button"
+        className="message-avatar-trigger"
+        onClick={(event) => onOpenProfile(message.senderId, event)}
+        title={`Ver perfil de ${message.senderName}`}
+      >
+        <span className="text-message-avatar" aria-hidden="true">
+          {avatarUrl ? <img src={avatarUrl} alt="" /> : initial}
+        </span>
+      </button>
       <div>
         <header>
-          <strong>{message.senderName}</strong>
+          <button type="button" className="message-name-trigger" onClick={(event) => onOpenProfile(message.senderId, event)}>
+            {message.senderName}
+          </button>
           <time dateTime={new Date(message.sentAt).toISOString()}>
             {new Date(message.sentAt).toLocaleString('pt-BR', {
               day: '2-digit',
@@ -71,16 +83,21 @@ export function TextChannelView({
   channel,
   session,
   messageStyle,
+  voiceChannelId,
+  onOpenProfile,
 }: {
   channel: TextChannel;
   session: UserSession;
   messageStyle: MessageStyle;
+  voiceChannelId: string | null;
+  onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
 }) {
   const [messages, setMessages] = useState<TextMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -91,6 +108,7 @@ export function TextChannelView({
     setDraft('');
     setLoading(true);
     setError('');
+    setFeedback('');
 
     const refresh = async () => {
       if (requestRunning) return;
@@ -129,11 +147,22 @@ export function TextChannelView({
     if (!text || sending) return;
     setSending(true);
     setError('');
+    setFeedback('');
     try {
-      const { message } = await api.sendTextMessage(channel.id, text);
-      setMessages((current) => current.some(({ id }) => id === message.id) ? current : [...current, message]);
+      const result = await routeTextChannelInput({
+        text,
+        voiceChannelId,
+        sendMusicCommand: api.sendMusicCommand,
+        sendTextMessage: async (messageText) => (await api.sendTextMessage(channel.id, messageText)).message,
+      });
+      if (result.kind === 'text-message') {
+        const { message } = result;
+        setMessages((current) => current.some(({ id }) => id === message.id) ? current : [...current, message]);
+        window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
+      } else {
+        setFeedback(result.response.message);
+      }
       setDraft('');
-      window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
       inputRef.current?.focus();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível enviar a mensagem.');
@@ -145,6 +174,7 @@ export function TextChannelView({
   return (
     <section className="text-channel-view" aria-label={`Canal de texto ${channel.name}`}>
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
+      {feedback && <div className="audio-permission" role="status"><span>{feedback}</span></div>}
       <div
         className={`messages text-channel-messages ${messageStyle === 'compact' ? 'compact' : ''} ${messageStyle === 'grouped' ? 'grouped' : ''}`}
         role="log"
@@ -166,7 +196,15 @@ export function TextChannelView({
             messageStyle === 'grouped' &&
             previous?.senderId === message.senderId &&
             message.sentAt - previous.sentAt < 5 * 60 * 1000;
-          return <TextMessageRow key={message.id} message={message} continued={continued} session={session} />;
+          return (
+            <TextMessageRow
+              key={message.id}
+              message={message}
+              continued={continued}
+              session={session}
+              onOpenProfile={onOpenProfile}
+            />
+          );
         })}
         <div ref={endRef} />
       </div>

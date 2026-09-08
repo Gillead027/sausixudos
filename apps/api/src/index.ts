@@ -19,6 +19,8 @@ import {
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
   type LiveKitTokenResponse,
+  parseParticipantMetadata,
+  type HumanParticipantMetadata,
   type PublicConfig,
   type RoomSummary,
   type UserSession,
@@ -40,6 +42,7 @@ import {
   listTextChannels,
   listTextMessages,
 } from './textChannels.js';
+import { authorizeMusicCommand } from './musicCommands.js';
 
 const app = express();
 const roomService = new RoomServiceClient(
@@ -126,7 +129,7 @@ const tokenSchema = z.object({ roomId: z.string().min(1).max(32) });
 
 const musicCommandSchema = z.object({
   roomId: z.string().min(1).max(32),
-  text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH).startsWith('/'),
+  text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH),
 });
 
 const textChannelSchema = z.object({
@@ -274,6 +277,16 @@ app.get('/api/users/:id/avatar', requireSession, (request, response) => {
   response.json({ avatarUrl: user.avatarDataUrl });
 });
 
+app.get('/api/users/:id/profile', requireSession, (request, response) => {
+  const id = request.params.id;
+  const user = typeof id === 'string' ? getUserById(id) : undefined;
+  if (!user) {
+    response.status(404).json({ error: 'Usuário não encontrado.' });
+    return;
+  }
+  response.json({ user: toUserSession(user) });
+});
+
 app.get('/api/config', requireSession, (_request, response) => {
   const payload: PublicConfig = {
     livekitUrl: config.LIVEKIT_PUBLIC_URL,
@@ -354,11 +367,15 @@ app.get('/api/rooms', requireSession, async (_request, response, next) => {
         const participants = await roomService.listParticipants(channel.id);
         return {
           ...channel,
-          participants: participants.map((participant) => ({
-            identity: participant.identity,
-            name: participant.name || participant.identity,
-            isSharingScreen: participant.tracks.some((track) => track.source === TrackSource.SCREEN_SHARE),
-          })),
+          participants: participants.map((participant) => {
+            const metadata = parseParticipantMetadata(participant.metadata);
+            return {
+              identity: participant.identity,
+              name: participant.name || participant.identity,
+              participantType: metadata?.participantType ?? 'HUMAN',
+              isSharingScreen: participant.tracks.some((track) => track.source === TrackSource.SCREEN_SHARE),
+            };
+          }),
         };
       }),
     );
@@ -384,15 +401,18 @@ app.post('/api/livekit/token', requireSession, async (request, response) => {
   }
 
   const user = currentUser(response);
+  const metadata: HumanParticipantMetadata = {
+    app: 'sausixudos',
+    participantType: 'HUMAN',
+    userId: user.id,
+    accentColor: user.accentColor,
+    statusText: user.statusText,
+  };
   const accessToken = new AccessToken(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET, {
     identity: user.id,
     name: user.username,
     ttl: '10m',
-    metadata: JSON.stringify({
-      app: 'sausixudos',
-      accentColor: user.accentColor,
-      statusText: user.statusText,
-    }),
+    metadata: JSON.stringify(metadata),
   });
   accessToken.addGrant({
     room: room.id,
@@ -411,24 +431,55 @@ app.post('/api/livekit/token', requireSession, async (request, response) => {
 
 app.post('/api/music/command', requireSession, async (request, response) => {
   const body = musicCommandSchema.safeParse(request.body);
-  const room = body.success ? config.channels.find((channel) => channel.id === body.data.roomId) : undefined;
-  if (!body.success || !room) {
-    response.status(400).json({ error: 'Canal inválido.' });
+  if (!body.success) {
+    response.status(400).json({ error: 'Comando musical inválido.' });
     return;
   }
 
   const user = currentUser(response);
   try {
-    await fetch(`${config.MUSIC_BOT_INTERNAL_URL}/command`, {
+    const authorization = await authorizeMusicCommand({
+      roomId: body.data.roomId,
+      text: body.data.text,
+      channels: config.channels,
+      requester: { id: user.id, displayName: user.username },
+      listParticipantIdentities: async (roomName) =>
+        (await roomService.listParticipants(roomName)).map(({ identity }) => identity),
+    });
+    if (!authorization.ok) {
+      if (authorization.reason === 'VOICE_REQUIRED') {
+        response.status(403).json({ error: 'Você precisa estar em um canal de voz para usar este comando.' });
+      } else {
+        response.status(400).json({ error: 'Comando musical ou canal inválido.' });
+      }
+      return;
+    }
+    console.log(
+      `[API] music command authorized room=${authorization.command.channelId} channel=${authorization.command.channelId} user=${user.id}`,
+    );
+
+    const botResponse = await fetch(`${config.MUSIC_BOT_INTERNAL_URL}/command`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channelId: room.id, text: body.data.text, requestedBy: user.username }),
+      body: JSON.stringify(authorization.command),
       signal: AbortSignal.timeout(5_000),
     });
+    if (!botResponse.ok) {
+      console.error(`SausiMusic rejeitou o comando com status ${botResponse.status}.`);
+      response.status(502).json({ error: 'O SausiMusic não conseguiu processar o comando.' });
+      return;
+    }
+    const botResult = (await botResponse.json()) as { message?: unknown };
+    if (typeof botResult.message !== 'string') {
+      response.status(502).json({ error: 'O SausiMusic retornou uma resposta inválida.' });
+      return;
+    }
+    response.json({ message: botResult.message });
   } catch (error) {
-    console.error('Falha ao repassar comando pro bot de música:', error);
+    console.error('Falha ao repassar comando para o SausiMusic:', error);
+    response.status(503).json({ error: 'O SausiMusic está indisponível.' });
+    return;
   }
-  response.status(204).end();
 });
 
 app.use((_request, response) => {

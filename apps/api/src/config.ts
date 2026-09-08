@@ -1,6 +1,6 @@
 import { config as loadEnv } from 'dotenv';
 import { z } from 'zod';
-import type { VoiceChannel } from '@sausixudos/shared';
+import { parseVoiceChannels } from '@sausixudos/shared';
 
 loadEnv({ path: new URL('../../../.env', import.meta.url), quiet: true });
 
@@ -25,29 +25,6 @@ const envSchema = z.object({
   ),
 });
 
-function parseChannels(value: string): VoiceChannel[] {
-  const channels = value.split(',').map((entry) => {
-    const [rawId, rawName, ...descriptionParts] = entry.split(':');
-    const id = rawId?.trim() ?? '';
-    const name = rawName?.trim() ?? '';
-    const description = descriptionParts.join(':').trim();
-
-    if (!/^[a-z0-9-]{1,32}$/.test(id) || !name || !description) {
-      throw new Error(
-        `Canal inválido "${entry}". Use id:nome:descrição e apenas a-z, 0-9 ou hífen no id.`,
-      );
-    }
-
-    return { id, name, description };
-  });
-
-  if (channels.length === 0 || new Set(channels.map(({ id }) => id)).size !== channels.length) {
-    throw new Error('VOICE_CHANNELS deve conter canais com ids únicos.');
-  }
-
-  return channels;
-}
-
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
@@ -57,6 +34,6 @@ if (!parsed.success) {
 
 export const config = {
   ...parsed.data,
-  channels: parseChannels(parsed.data.VOICE_CHANNELS),
+  channels: parseVoiceChannels(parsed.data.VOICE_CHANNELS),
   isProduction: parsed.data.NODE_ENV === 'production',
 };
