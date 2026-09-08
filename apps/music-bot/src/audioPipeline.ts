@@ -8,11 +8,8 @@ const COOKIES_MASTER = process.env.YTDLP_COOKIES_MASTER || '/app/cookies-master.
 
 /**
  * yt-dlp sempre tenta regravar o cookie jar ao terminar, e ao fazer isso
- * descarta cookies marcados como "de sessão" — incluindo os de autenticação
- * (SID/HSID/SAPISID/LOGIN_INFO), o que já deslogou a conta uma vez e voltou
- * a ativar o bloqueio de bot do YouTube. Por isso o master fica só-leitura,
- * e cada execução trabalha numa cópia descartável: o yt-dlp pode estragar a
- * cópia à vontade que o arquivo de verdade nunca é tocado.
+ * descarta cookies marcados como "de sessão". O master fica só-leitura e
+ * cada execução usa uma cópia descartável.
  */
 function cookiesArgs(): string[] {
   try {
@@ -37,10 +34,68 @@ export interface AudioPipeline {
 }
 
 /**
+ * Fonte determinística usada por /play-file e pelos testes de integração.
+ * A posição só avança quando isPaused() é falso, então pause/resume preserva
+ * o ponto da reprodução em vez de reiniciar ou consumir áudio silenciosamente.
+ */
+export function startTestTonePipeline(
+  onFrame: (frame: Int16Array) => void,
+  onEnd: (error: Error | null) => void,
+  isPaused: () => boolean = () => false,
+  durationMs = 6000,
+): AudioPipeline {
+  let stopped = false;
+  let frameIndex = 0;
+  let settled = false;
+  const totalFrames = Math.ceil(durationMs / FRAME_INTERVAL_MS);
+
+  const finish = (error: Error | null) => {
+    if (settled) return;
+    settled = true;
+    onEnd(error);
+  };
+
+  const ticker = setInterval(() => {
+    if (stopped || isPaused()) return;
+    if (frameIndex >= totalFrames) {
+      clearInterval(ticker);
+      finish(null);
+      return;
+    }
+
+    const frame = new Int16Array(FRAME_SAMPLES * CHANNELS);
+    const firstSample = frameIndex * FRAME_SAMPLES;
+    for (let index = 0; index < FRAME_SAMPLES; index += 1) {
+      const time = (firstSample + index) / SAMPLE_RATE;
+      const sample = Math.round(
+        (Math.sin(2 * Math.PI * 440 * time) * 0.18 + Math.sin(2 * Math.PI * 660 * time) * 0.05) * 32767,
+      );
+      frame[index * CHANNELS] = sample;
+      frame[index * CHANNELS + 1] = sample;
+    }
+
+    frameIndex += 1;
+    onFrame(frame);
+
+    if (frameIndex >= totalFrames) {
+      clearInterval(ticker);
+      finish(null);
+    }
+  }, FRAME_INTERVAL_MS);
+
+  return {
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(ticker);
+    },
+  };
+}
+
+/**
  * Baixa o áudio de `url` via yt-dlp e decodifica para PCM 16-bit intercalado
  * (48kHz, estéreo) via ffmpeg, entregando um quadro de 10ms para `onFrame` a
- * cada 10ms de verdade (o LiveKit espera quadros no ritmo real de reprodução,
- * não o mais rápido que o ffmpeg consiga decodificar).
+ * cada 10ms de verdade.
  */
 export function startAudioPipeline(
   url: string,
@@ -133,6 +188,7 @@ export function startAudioPipeline(
 
   return {
     stop: () => {
+      if (stopped) return;
       stopped = true;
       clearInterval(ticker);
       ytdlp.kill('SIGKILL');
