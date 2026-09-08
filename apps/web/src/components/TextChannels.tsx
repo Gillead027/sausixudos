@@ -36,7 +36,36 @@ function useTextAvatar(userId: string, session: UserSession): string | undefined
   return userId === session.id ? session.avatarUrl || undefined : textAvatarCache.get(userId) || undefined;
 }
 
-function TextMessageRow({
+function BotTextMessageRow({
+  message,
+  onMusicCommand,
+}: {
+  message: TextMessage;
+  onMusicCommand: (command: string) => Promise<MusicCommandResponse>;
+}) {
+  return (
+    <article className="message text-message sausimusic-message">
+      <div className="sausimusic-bot-avatar" aria-hidden="true"><span className="sausimusic-avatar-bars"><i /><i /><i /></span></div>
+      <div className="sausimusic-message-content">
+        <header className="sausimusic-message-header">
+          <strong>{message.senderName}</strong>
+          <span className="sausimusic-app-badge">APP</span>
+          <time dateTime={new Date(message.sentAt).toISOString()}>
+            {new Date(message.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+          </time>
+          <span className="sausimusic-sleep-mark" aria-hidden="true">zZ</span>
+        </header>
+        {message.musicCard ? (
+          <MusicCard card={message.musicCard} onCommand={onMusicCommand} />
+        ) : (
+          <p>{message.text}</p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function HumanTextMessageRow({
   message,
   continued,
   session,
@@ -79,6 +108,18 @@ function TextMessageRow({
       </div>
     </article>
   );
+}
+
+function TextMessageRow(props: {
+  message: TextMessage;
+  continued: boolean;
+  session: UserSession;
+  onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
+  onMusicCommand: (command: string) => Promise<MusicCommandResponse>;
+}) {
+  return props.message.senderType === 'BOT'
+    ? <BotTextMessageRow message={props.message} onMusicCommand={props.onMusicCommand} />
+    : <HumanTextMessageRow message={props.message} continued={props.continued} session={props.session} onOpenProfile={props.onOpenProfile} />;
 }
 
 export function TextChannelView({
@@ -154,12 +195,19 @@ export function TextChannelView({
       const result = await routeTextChannelInput({
         text,
         voiceChannelId,
+        textChannelId: channel.id,
         sendMusicCommand: api.sendMusicCommand,
         sendTextMessage: async (messageText) => (await api.sendTextMessage(channel.id, messageText)).message,
       });
       if (result.kind === 'text-message') {
         const { message } = result;
         setMessages((current) => current.some(({ id }) => id === message.id) ? current : [...current, message]);
+        window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
+      } else if (result.response.textMessage) {
+        const botMessage = result.response.textMessage;
+        setMessages((current) => current.some(({ id }) => id === botMessage.id)
+          ? current
+          : [...current, botMessage]);
         window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
       } else {
         setFeedback(result.response);
@@ -205,6 +253,12 @@ export function TextChannelView({
               continued={continued}
               session={session}
               onOpenProfile={onOpenProfile}
+              onMusicCommand={async (commandText) => {
+                if (!voiceChannelId) {
+                  throw new Error('Você precisa estar em um canal de voz para usar os controles do SausiMusic.');
+                }
+                return api.sendMusicCommand(voiceChannelId, commandText);
+              }}
             />
           );
         })}

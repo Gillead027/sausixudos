@@ -232,6 +232,8 @@ export interface MusicNowPlayingCard {
   requestedBy: string;
   state: string;
   volume: number;
+  queueSize?: number;
+  voiceChannelId?: string;
   thumbnailUrl?: string;
   webUrl?: string;
 }
@@ -239,6 +241,7 @@ export interface MusicNowPlayingCard {
 export interface MusicCommandResponse {
   message: string;
   nowPlaying?: MusicNowPlayingCard;
+  textMessage?: TextMessage;
 }
 
 /** Contrato interno usado pela API para encaminhar um comando autenticado ao SausiMusic. */
@@ -354,6 +357,8 @@ export interface TextMessage {
   channelId: string;
   senderId: string;
   senderName: string;
+  senderType: ParticipantType;
   text: string;
   sentAt: number;
+  musicCard?: MusicNowPlayingCard;
 }

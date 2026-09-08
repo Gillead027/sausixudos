@@ -21,6 +21,8 @@ import {
   type LiveKitTokenResponse,
   parseParticipantMetadata,
   type HumanParticipantMetadata,
+  type MusicCommandResponse,
+  type MusicNowPlayingCard,
   type PublicConfig,
   type RoomSummary,
   type UserSession,
@@ -35,6 +37,7 @@ import {
 } from './session.js';
 import { createUser, getUserById, getUserByUsername, updateUserProfile, verifyPassword, type UserRecord } from './users.js';
 import {
+  createMusicBotTextMessage,
   createTextChannel,
   createTextMessage,
   getTextChannelById,
@@ -130,6 +133,7 @@ const tokenSchema = z.object({ roomId: z.string().min(1).max(32) });
 const musicCommandSchema = z.object({
   roomId: z.string().min(1).max(32),
   text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH),
+  textChannelId: z.string().min(1).max(32).optional(),
 });
 
 const textChannelSchema = z.object({
@@ -443,6 +447,11 @@ app.post('/api/music/command', requireSession, async (request, response) => {
     return;
   }
 
+  if (body.data.textChannelId && !getTextChannelById(body.data.textChannelId)) {
+    response.status(404).json({ error: 'Canal de texto n\u00e3o encontrado.' });
+    return;
+  }
+
   const user = currentUser(response);
   try {
     const authorization = await authorizeMusicCommand({
@@ -481,7 +490,27 @@ app.post('/api/music/command', requireSession, async (request, response) => {
       response.status(502).json({ error: 'O SausiMusic retornou uma resposta inválida.' });
       return;
     }
-    response.json(botResult);
+    let nowPlaying: MusicNowPlayingCard | undefined;
+    if (botResult.nowPlaying && typeof botResult.nowPlaying === 'object') {
+      nowPlaying = {
+        ...(botResult.nowPlaying as MusicNowPlayingCard),
+        voiceChannelId: authorization.command.channelId,
+      };
+    }
+
+    const payload: MusicCommandResponse = nowPlaying
+      ? { message: botResult.message, nowPlaying }
+      : { message: botResult.message };
+    const publishesCard = new Set(['play', 'playlist', 'nowplaying', 'play-file', 'play-local'])
+      .has(authorization.command.command);
+    if (body.data.textChannelId && nowPlaying && publishesCard) {
+      payload.textMessage = createMusicBotTextMessage(
+        body.data.textChannelId,
+        botResult.message,
+        nowPlaying,
+      );
+    }
+    response.json(payload);
   } catch (error) {
     console.error('Falha ao repassar comando para o SausiMusic:', error);
     response.status(503).json({ error: 'O SausiMusic está indisponível.' });

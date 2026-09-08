@@ -1056,41 +1056,118 @@ body { letter-spacing: -.01em; }
 }
 
 .music-command-feedback {
-  margin: 10px 14px 0;
-  padding: 10px 12px;
+  margin: 10px 18px 0;
+  padding: 9px 12px;
+  border: 1px solid #30384a;
   border-radius: 8px;
-  background: var(--bg-elevated, #202225);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cfd2dc;
+  background: #151a24;
+  font-size: 12px;
 }
-.music-command-feedback > span { display: block; font-size: 13px; margin-bottom: 8px; }
-.music-now-card {
-  display: flex;
-  gap: 12px;
-  width: min(100%, 430px);
-  padding: 10px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
-  border-left: 4px solid #5865f2;
+.music-command-feedback > span { display: block; }
+
+/* SausiMusic - mensagem de bot + player inspirado no card de referencia */
+.sausimusic-message {
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  max-width: 690px;
+  margin: 2px 0 18px;
+  align-items: start;
 }
-.music-now-thumb {
-  width: 78px;
-  height: 78px;
-  border-radius: 8px;
-  object-fit: cover;
-  flex: 0 0 auto;
-}.music-now-thumb.placeholder {
-  display: grid;
-  place-items: center;
-  font-size: 32px;
-  background: rgba(255, 255, 255, 0.08);
+.sausimusic-bot-avatar {
+  width: 40px; height: 40px; display: grid; place-items: center;
+  border-radius: 50%; color: #fff;
+  background: radial-gradient(circle at 35% 30%, #a79cff 0 16%, #7c6ff0 42%, #5d52cf 100%);
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,.14), 0 3px 11px rgba(80,63,170,.28);
+  font-size: 20px; font-weight: 800;
 }
-.music-now-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
-.music-now-label { font-size: 10px; font-weight: 700; letter-spacing: .08em; opacity: .7; }
-.music-now-title { color: inherit; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
-.music-now-title:hover { text-decoration: underline; }
-.music-now-author { font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.music-now-progress { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, .12); overflow: hidden; margin-top: 4px; }
-.music-now-progress > span { display: block; height: 100%; background: currentColor; opacity: .75; }
-.music-now-meta { display: flex; justify-content: space-between; gap: 10px; font-size: 10px; opacity: .65; }
-.music-now-body small { font-size: 10px; opacity: .55; }
-.message .music-now-card { margin-top: 7px; }
+.sausimusic-avatar-bars, .sausimusic-cover-bars { display: flex; align-items: center; justify-content: center; gap: 2px; }
+.sausimusic-avatar-bars i, .sausimusic-cover-bars i { display: block; width: 3px; border-radius: 999px; background: currentColor; }
+.sausimusic-avatar-bars i:nth-child(1) { height: 10px; }
+.sausimusic-avatar-bars i:nth-child(2) { height: 18px; }
+.sausimusic-avatar-bars i:nth-child(3) { height: 13px; }
+.sausimusic-message-content { min-width: 0; width: min(100%, 610px); }
+.sausimusic-message-header { min-height: 22px; display: flex !important; align-items: center !important; gap: 6px !important; margin-bottom: 1px; }
+.sausimusic-message-header strong { color: #c76cff !important; font-size: 13px !important; font-weight: 650 !important; }
+.sausimusic-app-badge {
+  display: inline-flex; align-items: center; gap: 2px; height: 15px; padding: 0 4px;
+  border-radius: 3px; color: #fff; background: #5865f2;
+  font-size: 8px; font-weight: 800; letter-spacing: .25px;
+}
+.sausimusic-app-badge::before { content: '\2713'; font-size: 8px; font-weight: 900; }
+.sausimusic-message-header time { color: #777a82 !important; font-size: 9px !important; }
+.sausimusic-sleep-mark { margin-left: 2px; color: #70737b; font-size: 12px; transform: rotate(-12deg); }
+
+.sausimusic-player-shell { width: min(100%, 554px); margin-top: 1px; }
+.sausimusic-embed {
+  position: relative;
+  padding: 14px 16px 21px 12px;
+  overflow: hidden;
+  border: 1px solid #292b31;
+  border-left: 4px solid #8c63ff;
+  border-radius: 6px;
+  color: #d9dbe1;
+  background: #0c0d10;
+  box-shadow: 0 1px 0 rgba(255,255,255,.02), 0 5px 16px rgba(0,0,0,.18);
+}
+.sausimusic-embed-title { color: #299cff; font-size: 14px; font-weight: 700; line-height: 1.35; }
+.sausimusic-divider { height: 1px; margin: 10px 0 9px; background: #2a2c31; }
+.sausimusic-track-row { display: block; min-height: 61px; padding-right: 105px; }
+.sausimusic-track-copy { min-width: 0; padding-top: 1px; }
+.sausimusic-track-title {
+  display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #29a0ff; font-size: 13px; font-weight: 700; text-decoration: none;
+}
+.sausimusic-track-title:hover { text-decoration: underline; }
+.sausimusic-track-author { margin-top: 2px; color: #9da0a8; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sausimusic-detail-line { display: flex; align-items: center; gap: 6px; min-height: 20px; color: #d3d5dc; font-size: 12px; }
+.sausimusic-detail-line:first-of-type { margin-top: 3px; }
+.sausimusic-bullet { width: 4px; height: 4px; flex: 0 0 auto; border-radius: 50%; background: #f0f1f2; }
+.sausimusic-detail-line b { padding: 0 3px; border-radius: 3px; color: #aeb7ff; background: rgba(92,102,242,.25); font-weight: 600; }
+.sausimusic-voice-pill { display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; border-radius: 3px; color: #b8bcff; background: rgba(88,101,242,.22); font-size: 10px; }
+.sausimusic-art-column { position: absolute; top: 53px; right: 16px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.sausimusic-cover { width: 86px; height: 86px; display: block; object-fit: cover; border-radius: 8px; background: #15171b; }
+.sausimusic-cover-placeholder { display: grid; place-items: center; color: #c8c0ff; background: radial-gradient(circle at 50% 45%, #32305c, #171821 70%); }
+.sausimusic-cover-bars i { width: 5px; }
+.sausimusic-cover-bars i:nth-child(1) { height: 20px; }
+.sausimusic-cover-bars i:nth-child(2) { height: 34px; }
+.sausimusic-cover-bars i:nth-child(3) { height: 25px; }
+.sausimusic-like {
+  height: 32px; border: 1px solid #34363c; border-radius: 7px; color: #e0e1e5; background: #1b1d21;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  cursor: pointer; font-size: 11px; font-weight: 600;
+}
+.sausimusic-like:hover, .sausimusic-like.active { background: #27292e; }
+.sausimusic-like.active { color: #ff8ba4; }
+
+.sausimusic-stats { margin-top: 32px; padding-right: 102px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: #c6c8cf; font-size: 12px; line-height: 1.4; }
+.sausimusic-stats > span { color: #7d8088; margin: 0 1px; }
+.sausimusic-stats code { padding: 1px 3px; border-radius: 3px; color: #cfd1d8; background: #202228; font: inherit; font-size: 11px; }
+.sausimusic-progress { position: relative; height: 6px; margin: 29px 0 6px; border-radius: 999px; background: #3f4146; }
+.sausimusic-progress > span { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: #7f6bf3; }
+.sausimusic-progress > i {
+  position: absolute; top: 50%; width: 18px; height: 18px; transform: translate(-50%, -50%);
+  border: 3px solid #fff; border-radius: 50%; background: #8e73f5; box-shadow: 0 1px 3px rgba(0,0,0,.45);
+}
+.sausimusic-time-row { display: flex; align-items: center; justify-content: space-between; color: #e1e2e5; font-size: 13px; }
+.sausimusic-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.sausimusic-controls button, .sausimusic-reactions button {
+  min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 11px; border: 1px solid #34363d; border-radius: 7px;
+  color: #dadbe0; background: #1c1e22; cursor: pointer; font-size: 11px; font-weight: 650;
+  transition: background-color 100ms, border-color 100ms, color 100ms;
+}
+.sausimusic-controls button:hover:not(:disabled), .sausimusic-reactions button:hover:not(:disabled) { background: #292b30; border-color: #41444c; }
+.sausimusic-controls button:active:not(:disabled), .sausimusic-reactions button:active:not(:disabled) { transform: translateY(1px); }
+.sausimusic-controls button.active { border-color: #6f62d5; color: #dedaff; background: #292544; }
+.sausimusic-control-status { margin-top: 9px; padding-top: 8px; border-top: 1px solid #26282d; color: #9699a2; font-size: 10px; line-height: 1.35; }
+.sausimusic-reactions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.sausimusic-reactions button { min-height: 31px; }
+.sausimusic-reactions button.active { border-color: #6259b6; color: #d9d4ff; background: #292543; }
+
+.messages.compact .sausimusic-message { grid-template-columns: 32px minmax(0,1fr); }
+.messages.compact .sausimusic-bot-avatar { width: 30px; height: 30px; font-size: 15px; }
+@media (max-width: 1180px) {
+  .sausimusic-player-shell { width: min(100%, 520px); }
+  .sausimusic-controls { gap: 6px; }
+  .sausimusic-controls button { padding: 0 9px; }
+}

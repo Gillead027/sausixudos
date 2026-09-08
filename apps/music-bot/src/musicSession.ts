@@ -374,6 +374,7 @@ export class MusicSession {
         requestedBy: track.requestedBy.displayName,
         state: this.state,
         volume: this.volume,
+        queueSize: this.upcomingTracks.length,
       };
       if (track.providerTrack.thumbnailUrl) card.thumbnailUrl = track.providerTrack.thumbnailUrl;
       if (track.providerTrack.webUrl) card.webUrl = track.providerTrack.webUrl;
@@ -388,6 +389,7 @@ export class MusicSession {
       requestedBy: track.requestedBy.displayName,
       state: this.state,
       volume: this.volume,
+      queueSize: this.upcomingTracks.length,
     };
   }
 
@@ -436,7 +438,7 @@ export class MusicSession {
     });
     const next = await this.advanceQueue('SKIPPED');
     return next
-      ? reply(`Faixa pulada. Tocando agora: ${next.title}.`)
+      ? reply(`Faixa pulada. Tocando agora: ${next.title}.`, this.nowPlayingCard())
       : reply('Faixa pulada. A fila terminou.');
   }
 

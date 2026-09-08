@@ -37,6 +37,18 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_text_messages_channel_created
     ON text_messages(channel_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS text_bot_messages (
+    id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL REFERENCES text_channels(id) ON DELETE CASCADE,
+    sender_name TEXT NOT NULL,
+    text TEXT NOT NULL,
+    music_card_json TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_text_bot_messages_channel_created
+    ON text_bot_messages(channel_id, created_at DESC);
 `);
 
 db.prepare(

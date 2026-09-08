@@ -59,10 +59,10 @@ export const api = {
     }),
   getUserAvatar: (userId: string) => request<{ avatarUrl: string }>(`/api/users/${userId}/avatar`),
   getUserProfile: (userId: string) => request<{ user: UserSession }>(`/api/users/${userId}/profile`),
-  sendMusicCommand: (roomId: string, text: string) =>
+  sendMusicCommand: (roomId: string, text: string, textChannelId?: string) =>
     request<MusicCommandResponse>('/api/music/command', {
       method: 'POST',
-      body: JSON.stringify({ roomId, text }),
+      body: JSON.stringify({ roomId, text, ...(textChannelId ? { textChannelId } : {}) }),
     }),
   getConfig: () => request<PublicConfig>('/api/config'),
   getRooms: () =>

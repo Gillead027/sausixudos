@@ -10,8 +10,9 @@ describe('roteamento do composer de canal de texto', () => {
     const result = await routeTextChannelInput({
       text: '/play-file',
       voiceChannelId: 'geral',
-      sendMusicCommand: async (channelId, text) => {
-        calls.push(`music:${channelId}:${text}`);
+      textChannelId: 'musica',
+      sendMusicCommand: async (channelId, text, textChannelId) => {
+        calls.push(`music:${channelId}:${text}:${textChannelId}`);
         return { message: 'SausiMusic recebeu o comando.' };
       },
       sendTextMessage: async (text) => {
@@ -21,7 +22,7 @@ describe('roteamento do composer de canal de texto', () => {
     });
 
     assert.equal(result.kind, 'music-command');
-    assert.deepEqual(calls, ['music:geral:/play-file']);
+    assert.deepEqual(calls, ['music:geral:/play-file:musica']);
   });
 
   it('encaminha mensagem comum somente para o canal de texto', async () => {

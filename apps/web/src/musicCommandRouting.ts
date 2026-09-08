@@ -3,7 +3,12 @@ import { isMusicCommandInput, type MusicCommandResponse } from '@sausixudos/shar
 interface MusicCommandRoute {
   text: string;
   voiceChannelId: string | null;
-  sendMusicCommand: (voiceChannelId: string, text: string) => Promise<MusicCommandResponse>;
+  textChannelId?: string | undefined;
+  sendMusicCommand: (
+    voiceChannelId: string,
+    text: string,
+    textChannelId?: string,
+  ) => Promise<MusicCommandResponse>;
 }
 
 function requireVoiceChannel(voiceChannelId: string | null): string {
@@ -16,17 +21,19 @@ function requireVoiceChannel(voiceChannelId: string | null): string {
 async function routeMusicCommand({
   text,
   voiceChannelId,
+  textChannelId,
   sendMusicCommand,
 }: MusicCommandRoute): Promise<MusicCommandResponse | null> {
   if (!isMusicCommandInput(text)) return null;
   const channelId = requireVoiceChannel(voiceChannelId);
   console.info(`[WEB] music command detected channel=${channelId}`);
-  return sendMusicCommand(channelId, text);
+  return sendMusicCommand(channelId, text, textChannelId);
 }
 
 export async function routeTextChannelInput<T>({
   text,
   voiceChannelId,
+  textChannelId,
   sendMusicCommand,
   sendTextMessage,
 }: MusicCommandRoute & {
@@ -35,7 +42,7 @@ export async function routeTextChannelInput<T>({
   | { kind: 'music-command'; response: MusicCommandResponse }
   | { kind: 'text-message'; message: T }
 > {
-  const response = await routeMusicCommand({ text, voiceChannelId, sendMusicCommand });
+  const response = await routeMusicCommand({ text, voiceChannelId, textChannelId, sendMusicCommand });
   if (response) return { kind: 'music-command', response };
   return { kind: 'text-message', message: await sendTextMessage(text) };
 }

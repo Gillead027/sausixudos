@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { TextChannel, TextMessage } from '@sausixudos/shared';
+import {
+  MUSIC_BOT_DISPLAY_NAME,
+  MUSIC_BOT_IDENTITY,
+  type MusicNowPlayingCard,
+  type TextChannel,
+  type TextMessage,
+} from '@sausixudos/shared';
 import { db } from './db.js';
 import type { UserRecord } from './users.js';
 
@@ -17,6 +23,15 @@ interface TextMessageRow {
   sender_id: string;
   sender_name: string;
   text: string;
+  created_at: number;
+}
+
+interface TextBotMessageRow {
+  id: string;
+  channel_id: string;
+  sender_name: string;
+  text: string;
+  music_card_json: string | null;
   created_at: number;
 }
 
@@ -48,6 +63,18 @@ const listMessagesStatement = db.prepare(`
   LIMIT ?
 `);
 
+const listBotMessagesStatement = db.prepare(`
+  SELECT id, channel_id, sender_name, text, music_card_json, created_at
+  FROM text_bot_messages
+  WHERE channel_id = ?
+  ORDER BY created_at DESC
+  LIMIT ?
+`);
+const insertBotMessageStatement = db.prepare(`
+  INSERT INTO text_bot_messages (id, channel_id, sender_name, text, music_card_json, created_at)
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
 function toChannel(row: TextChannelRow): TextChannel {
   return {
     id: row.id,
@@ -64,8 +91,30 @@ function toMessage(row: TextMessageRow): TextMessage {
     channelId: row.channel_id,
     senderId: row.sender_id,
     senderName: row.sender_name,
+    senderType: 'HUMAN',
     text: row.text,
     sentAt: row.created_at,
+  };
+}
+
+function toBotMessage(row: TextBotMessageRow): TextMessage {
+  let musicCard: MusicNowPlayingCard | undefined;
+  if (row.music_card_json) {
+    try {
+      musicCard = JSON.parse(row.music_card_json) as MusicNowPlayingCard;
+    } catch {
+      musicCard = undefined;
+    }
+  }
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    senderId: MUSIC_BOT_IDENTITY,
+    senderName: row.sender_name,
+    senderType: 'BOT',
+    text: row.text,
+    sentAt: row.created_at,
+    ...(musicCard ? { musicCard } : {}),
   };
 }
 
@@ -119,9 +168,13 @@ export function createTextChannel(
 }
 
 export function listTextMessages(channelId: string, limit = 100): TextMessage[] {
-  return (listMessagesStatement.all(channelId, limit) as unknown as TextMessageRow[])
-    .map(toMessage)
-    .reverse();
+  const humanMessages = (listMessagesStatement.all(channelId, limit) as unknown as TextMessageRow[])
+    .map(toMessage);
+  const botMessages = (listBotMessagesStatement.all(channelId, limit) as unknown as TextBotMessageRow[])
+    .map(toBotMessage);
+  return [...humanMessages, ...botMessages]
+    .sort((left, right) => left.sentAt - right.sentAt)
+    .slice(-limit);
 }
 
 export function createTextMessage(
@@ -134,6 +187,7 @@ export function createTextMessage(
     channelId,
     senderId: sender.id,
     senderName: sender.username,
+    senderType: 'HUMAN',
     text,
     sentAt: Date.now(),
   };
@@ -142,6 +196,33 @@ export function createTextMessage(
     message.channelId,
     message.senderId,
     message.text,
+    message.sentAt,
+  );
+  return message;
+}
+
+
+export function createMusicBotTextMessage(
+  channelId: string,
+  text: string,
+  musicCard: MusicNowPlayingCard,
+): TextMessage {
+  const message: TextMessage = {
+    id: randomUUID(),
+    channelId,
+    senderId: MUSIC_BOT_IDENTITY,
+    senderName: MUSIC_BOT_DISPLAY_NAME,
+    senderType: 'BOT',
+    text,
+    sentAt: Date.now(),
+    musicCard,
+  };
+  insertBotMessageStatement.run(
+    message.id,
+    message.channelId,
+    message.senderName,
+    message.text,
+    JSON.stringify(musicCard),
     message.sentAt,
   );
   return message;

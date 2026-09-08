@@ -225,6 +225,8 @@ describe('MusicSession player stateful', () => {
 
     const result = await harness.manager.execute(command('/skip'));
     assert.match(result.message, /Tocando agora: Test Tone #2/);
+    assert.equal(result.nowPlaying?.title, 'Test Tone #2');
+    assert.equal(result.nowPlaying?.queueSize, 0);
     assert.equal(session.state, 'PLAYING');
     assert.equal(session.currentTrack?.id, nextId);
     assert.equal(session.queue.length, 0);
