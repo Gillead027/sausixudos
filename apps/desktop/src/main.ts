@@ -251,7 +251,13 @@ function installSessionSecurity(appUrl: URL): void {
   const developmentConnections = app.isPackaged
     ? ''
     : ' https: wss: http://localhost:* ws://localhost:*';
-  const scriptSource = app.isPackaged ? "script-src 'self'" : "script-src 'self' 'unsafe-inline'";
+  // 'wasm-unsafe-eval' só libera compilar/instanciar WebAssembly (o filtro de
+  // ruído Krisp roda como um módulo WASM) — não abre eval de JS arbitrário
+  // como 'unsafe-eval' faria; sem isso o Chromium bloqueia silenciosamente
+  // qualquer WebAssembly.instantiate quando há CSP restringindo script-src.
+  const scriptSource = app.isPackaged
+    ? "script-src 'self' 'wasm-unsafe-eval'"
+    : "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'";
   const styleSource = app.isPackaged ? "style-src 'self'" : "style-src 'self' 'unsafe-inline'";
   // A cor de destaque personalizada (hex livre) na tela de Aparência precisa mutar
   // a custom property --accent via element.style em runtime. style-src sozinho

@@ -5,22 +5,32 @@ import {
   LocalParticipant,
   Participant,
   RemoteParticipant,
+  type RemoteTrack,
+  type RemoteTrackPublication,
   Room,
   RoomEvent,
   Track,
   TrackPublication,
   VideoPresets,
+  type AudioCaptureOptions,
+  type AudioProcessorOptions,
   type ScreenShareCaptureOptions,
+  type TrackProcessor,
   type TrackPublishOptions,
 } from 'livekit-client';
+import type { KrispNoiseFilterProcessor } from '@livekit/krisp-noise-filter';
 import {
   CHAT_MESSAGE_MAX_LENGTH,
+  MUSIC_BOT_DISPLAY_NAME,
+  MUSIC_BOT_IDENTITY,
+  VOICE_CHAT_TOPIC,
   type ChatMessage,
   type VoiceChannel,
 } from '@sausixudos/shared';
 import { api } from '../api';
 import { getOutputVolume } from '../appearancePrefs';
 import { describeMediaError } from '../mediaAccess';
+import { routeVoiceChatInput } from '../musicCommandRouting';
 import { playJoinSound, playLeaveSound, playMessageSound } from '../sounds';
 
 export type ShareQuality = '720p30' | '720p60' | '1080p60';
@@ -37,11 +47,47 @@ const AUTO_SENSITIVITY_KEY = 'gc:auto-sensitivity';
 const INPUT_SENSITIVITY_KEY = 'gc:input-sensitivity';
 
 /**
- * Espelha os 3 perfis do Discord usando só as constraints nativas do
- * navegador (não temos acesso ao Krisp, que é tecnologia proprietária
- * deles) — "Personalizado" expõe os 3 controles nativos individualmente.
+ * Espelha os 3 perfis do Discord. A supressão de ruído usa o Krisp de
+ * verdade (@livekit/krisp-noise-filter, o mesmo motor que o Discord usa —
+ * roda localmente no navegador via WASM, não é um serviço pago por
+ * requisição) sempre que o navegador suportar; sem suporte, cai pra
+ * supressão nativa do Chromium como alternativa. "Personalizado" expõe
+ * supressão/eco/ganho individualmente.
  */
 export type MicProfile = 'isolamento' | 'estudio' | 'personalizado';
+
+// @livekit/krisp-noise-filter empacota o modelo Krisp (~6MB) dentro do
+// próprio módulo JS — um import estático incharia o bundle principal do app
+// inteiro pra todo mundo, mesmo quem nunca abre um canal de voz. import()
+// dinâmico vira um chunk separado que só baixa quando alguém realmente entra
+// numa call, disparado assim que este módulo carrega (não só no primeiro
+// uso) pra já estar pronto quando a pessoa terminar de escolher o canal.
+let krispSupported = false;
+let krispModulePromise: ReturnType<typeof loadKrispModule> | null = null;
+
+function loadKrispModule() {
+  return import('@livekit/krisp-noise-filter').then((module) => {
+    krispSupported = module.isKrispNoiseFilterSupported();
+    return module;
+  });
+}
+
+function ensureKrispModule() {
+  krispModulePromise ??= loadKrispModule().catch((error) => {
+    krispSupported = false;
+    krispModulePromise = null;
+    throw error;
+  });
+  return krispModulePromise;
+}
+
+void ensureKrispModule();
+
+function wantsRealNoiseSuppression(profile: MicProfile, noiseSuppression: boolean): boolean {
+  if (profile === 'estudio') return false;
+  if (profile === 'isolamento') return true;
+  return noiseSuppression;
+}
 
 function loadMicProfile(): MicProfile {
   const stored = localStorage.getItem(MIC_PROFILE_KEY);
@@ -84,14 +130,18 @@ function microphoneCaptureOptions(
 ) {
   if (profile === 'estudio') {
     // "Áudio puro": igual ao Discord, mic aberto sem nenhum processamento.
-    return { noiseSuppression: false, echoCancellation: false, autoGainControl: false } as const;
+    return { noiseSuppression: false, echoCancellation: false, autoGainControl: false };
   }
-  if (profile === 'isolamento') {
-    // Sem o Krisp de verdade, o mais próximo é ligar tudo que o navegador
-    // já processa nativamente.
-    return { noiseSuppression: true, echoCancellation: true, autoGainControl: true } as const;
-  }
-  return { noiseSuppression, echoCancellation, autoGainControl: autoGain };
+  const suppressionWanted = wantsRealNoiseSuppression(profile, noiseSuppression);
+  return {
+    // O Krisp roda como processor sobre o track já publicado (attachKrispProcessor),
+    // não como constraint de captura — pedir os dois ao mesmo tempo cascateia
+    // dois DSPs de ruído diferentes, o que soa pior, não melhor. A constraint
+    // nativa só entra quando o Krisp não pôde carregar.
+    noiseSuppression: suppressionWanted && !krispSupported,
+    echoCancellation: profile === 'isolamento' ? true : echoCancellation,
+    autoGainControl: profile === 'isolamento' ? true : autoGain,
+  };
 }
 
 function loadInputMode(): InputMode {
@@ -106,11 +156,21 @@ function loadPttKey(): string {
 // no áudio do sistema/aba (jogo, música, vídeo), eles abafam e comprimem o som
 // exatamente como um microfone de telefone, o efeito de "dentro de uma caixa"
 // que estava sendo reportado. Áudio de tela não é voz, então desligamos os três.
+//
+// restrictOwnAudio é uma constraint real do Chromium (suportada no Windows a
+// partir do Electron 44): filtra do áudio capturado por loopback qualquer som
+// que tenha se originado do NOSSO PRÓPRIO app — inclui a voz de quem estiver
+// na call tocando pelos alto-falantes de quem compartilha. É o motivo de
+// alguém ouvir a própria voz (ou a de outros) voltando pela transmissão de
+// quem compartilha: sem isso, o loopback pega literalmente tudo que sai pelo
+// áudio do sistema, call incluída. Com isso, só o conteúdo real da tela
+// compartilhada (jogo, vídeo, música) deveria ser capturado.
 const SCREEN_SHARE_AUDIO_CAPTURE = {
   echoCancellation: false,
   noiseSuppression: false,
   autoGainControl: false,
-} as const;
+  restrictOwnAudio: true,
+} as AudioCaptureOptions & { restrictOwnAudio?: boolean };
 
 // audioPreset padrão do LiveKit pra qualquer publicação de áudio é otimizado
 // pra voz (bitrate baixo); música/jogo precisa de bitrate de música de
@@ -197,6 +257,13 @@ export function useVoiceRoom() {
   const [shareAudioActive, setShareAudioActive] = useState(false);
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [canPlaybackAudio, setCanPlaybackAudio] = useState(true);
+  const [krispReady, setKrispReady] = useState(krispSupported);
+
+  useEffect(() => {
+    ensureKrispModule()
+      .then(() => setKrispReady(krispSupported))
+      .catch(() => setKrispReady(false));
+  }, []);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
@@ -221,6 +288,7 @@ export function useVoiceRoom() {
   const autoGainRef = useRef(autoGainEnabled);
   const inputSensitivityRef = useRef(inputSensitivity);
   const deafenedRef = useRef(false);
+  const krispProcessorRef = useRef<KrispNoiseFilterProcessor | null>(null);
   // Suprime os sons de entrada/saída pra quem já estava no canal antes de
   // você conectar — sem isso, entrar numa call cheia tocaria um bipe pra
   // cada pessoa já presente, tudo de uma vez.
@@ -274,6 +342,14 @@ export function useVoiceRoom() {
   }, [room]);
 
   useEffect(() => {
+    const removeSpeaker = (identity: string) => {
+      setSpeakers((current) => {
+        if (!current.has(identity)) return current;
+        const next = new Set(current);
+        next.delete(identity);
+        return next;
+      });
+    };
     const onActiveSpeakers = (active: Participant[]) => {
       setSpeakers(new Set(active.map((participant) => participant.identity)));
     };
@@ -283,7 +359,7 @@ export function useVoiceRoom() {
       _kind?: unknown,
       topic?: string,
     ) => {
-      if (topic !== 'sausixudos-chat' || !participant) return;
+      if (topic !== VOICE_CHAT_TOPIC || !participant) return;
       try {
         const received = JSON.parse(new TextDecoder().decode(payload)) as ChatMessage;
         if (
@@ -314,9 +390,22 @@ export function useVoiceRoom() {
       syncRoom();
       if (!suppressPresenceSoundsRef.current) playJoinSound(getOutputVolume());
     };
-    const onParticipantDisconnected = () => {
+    const onParticipantDisconnected = (participant: RemoteParticipant) => {
+      removeSpeaker(participant.identity);
       syncRoom();
       if (!suppressPresenceSoundsRef.current) playLeaveSound(getOutputVolume());
+    };
+    const onTrackUnsubscribed = (
+      _track: RemoteTrack,
+      publication: RemoteTrackPublication,
+      participant: RemoteParticipant,
+    ) => {
+      if (publication.source === Track.Source.Microphone) removeSpeaker(participant.identity);
+      syncRoom();
+    };
+    const onTrackMuted = (publication: TrackPublication, participant: Participant) => {
+      if (publication.source === Track.Source.Microphone) removeSpeaker(participant.identity);
+      syncRoom();
     };
     // Cobre o caso de parar o compartilhamento pela barra nativa do Windows/
     // navegador em vez do nosso botão — sem isso, o mudo ficava travado.
@@ -326,15 +415,50 @@ export function useVoiceRoom() {
       }
       syncRoom();
     };
+    // O Krisp se prende ao track de microfone publicado (via setProcessor,
+    // que troca o sender por baixo dos panos) — precisa ser reanexado a cada
+    // publish porque reconectar cria um LocalAudioTrack novo. Troca de
+    // dispositivo NÃO passa por aqui: o próprio LiveKit reinicializa o
+    // processor já anexado quando o track é trocado.
+    const onLocalTrackPublished = (publication: TrackPublication) => {
+      if (publication.source !== Track.Source.Microphone) return;
+      const track = publication.track;
+      if (!(track instanceof LocalAudioTrack)) return;
+      void ensureKrispModule()
+        .then(({ KrispNoiseFilter }) => {
+          if (!krispSupported) return;
+          const processor = KrispNoiseFilter({ quality: 'medium' });
+          const previous = krispProcessorRef.current;
+          krispProcessorRef.current = processor;
+          // @livekit/krisp-noise-filter tipa `processedTrack` como
+          // `T | undefined` explícito; o `TrackProcessor` do livekit-client
+          // tipa como opcional simples — sob exactOptionalPropertyTypes isso
+          // é só uma divergência entre as declarações dos dois pacotes, não
+          // uma incompatibilidade real (é o processor oficial da LiveKit).
+          return track
+            .setProcessor(processor as TrackProcessor<Track.Kind.Audio, AudioProcessorOptions>)
+            .then(() => processor.setEnabled(wantsRealNoiseSuppression(micProfileRef.current, noiseSuppressionRef.current)))
+            .then(() => void previous?.destroy())
+            .catch(() => {
+              if (krispProcessorRef.current === processor) krispProcessorRef.current = null;
+            });
+        })
+        .catch(() => {
+          // Sem Krisp disponível: microphoneCaptureOptions() já usa a
+          // supressão nativa do navegador como alternativa nesse caso.
+        });
+    };
 
     room
       .on(RoomEvent.ParticipantConnected, onParticipantConnected)
       .on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected)
+      .on(RoomEvent.ParticipantMetadataChanged, syncRoom)
       .on(RoomEvent.TrackSubscribed, syncRoom)
-      .on(RoomEvent.TrackUnsubscribed, syncRoom)
-      .on(RoomEvent.TrackMuted, syncRoom)
+      .on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed)
+      .on(RoomEvent.TrackMuted, onTrackMuted)
       .on(RoomEvent.TrackUnmuted, syncRoom)
       .on(RoomEvent.LocalTrackPublished, syncRoom)
+      .on(RoomEvent.LocalTrackPublished, onLocalTrackPublished)
       .on(RoomEvent.LocalTrackUnpublished, onLocalTrackUnpublished)
       .on(RoomEvent.ActiveSpeakersChanged, onActiveSpeakers)
       .on(RoomEvent.DataReceived, onData)
@@ -345,6 +469,8 @@ export function useVoiceRoom() {
     return () => {
       room.removeAllListeners();
       void room.disconnect();
+      void krispProcessorRef.current?.destroy();
+      krispProcessorRef.current = null;
     };
   }, [room, syncRoom]);
 
@@ -629,6 +755,7 @@ export function useVoiceRoom() {
       micProfileRef.current = profile;
       setMicProfileState(profile);
       void applyMicCaptureOptions();
+      void krispProcessorRef.current?.setEnabled(wantsRealNoiseSuppression(profile, noiseSuppressionRef.current));
     },
     [applyMicCaptureOptions],
   );
@@ -639,6 +766,7 @@ export function useVoiceRoom() {
       noiseSuppressionRef.current = enabled;
       setNoiseSuppressionEnabled(enabled);
       void applyMicCaptureOptions();
+      void krispProcessorRef.current?.setEnabled(wantsRealNoiseSuppression(micProfileRef.current, enabled));
     },
     [applyMicCaptureOptions],
   );
@@ -757,20 +885,47 @@ export function useVoiceRoom() {
       const text = rawText.trim().slice(0, CHAT_MESSAGE_MAX_LENGTH);
       if (!text || room.state !== ConnectionState.Connected) return;
 
-      const message: ChatMessage = {
-        id: crypto.randomUUID(),
-        senderId: room.localParticipant.identity,
-        senderName: room.localParticipant.name || room.localParticipant.identity,
-        text,
-        sentAt: Date.now(),
-      };
-      await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(message)), {
-        reliable: true,
-        topic: 'sausixudos-chat',
-      });
-      setMessages((current) => [...current.slice(-99), message]);
+      setError('');
+      try {
+        const result = await routeVoiceChatInput({
+          text,
+          voiceChannelId: currentChannel?.id ?? null,
+          sendMusicCommand: api.sendMusicCommand,
+          publishChatMessage: async (messageText) => {
+            const message: ChatMessage = {
+              id: crypto.randomUUID(),
+              senderId: room.localParticipant.identity,
+              senderName: room.localParticipant.name || room.localParticipant.identity,
+              text: messageText,
+              sentAt: Date.now(),
+            };
+            await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(message)), {
+              reliable: true,
+              topic: VOICE_CHAT_TOPIC,
+            });
+            setMessages((current) => [...current.slice(-99), message]);
+          },
+        });
+        if (result.kind === 'music-command') {
+          const feedback: ChatMessage = {
+            id: crypto.randomUUID(),
+            senderId: MUSIC_BOT_IDENTITY,
+            senderName: MUSIC_BOT_DISPLAY_NAME,
+            text: result.response.message,
+            sentAt: Date.now(),
+          };
+          setMessages((current) => [...current.slice(-99), feedback]);
+        }
+      } catch (commandError) {
+        setError(
+          commandError instanceof Error
+            ? commandError.message
+            : 'Não foi possível encaminhar o comando ao SausiMusic.',
+        );
+        throw commandError;
+      }
     },
-    [room],
+    [currentChannel?.id, room],
   );
 
   const connected = connectionState === ConnectionState.Connected;
@@ -803,6 +958,7 @@ export function useVoiceRoom() {
       pttKey,
       pttActive,
       micProfile,
+      krispSupported: krispReady,
       noiseSuppressionEnabled,
       echoCancellationEnabled,
       autoGainEnabled,
@@ -855,6 +1011,7 @@ export function useVoiceRoom() {
       pttKey,
       pttActive,
       micProfile,
+      krispReady,
       noiseSuppressionEnabled,
       echoCancellationEnabled,
       autoGainEnabled,

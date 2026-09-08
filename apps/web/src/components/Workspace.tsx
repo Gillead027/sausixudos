@@ -1,6 +1,16 @@
 import { type FormEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { ACCENT_COLORS, type AccentColor, type PublicConfig, type RoomSummary, type TextChannel, type UserSession, type VoiceChannel } from '@sausixudos/shared';
+import {
+  ACCENT_COLORS,
+  MUSIC_BOT_IDENTITY,
+  parseParticipantMetadata,
+  type AccentColor,
+  type PublicConfig,
+  type RoomSummary,
+  type TextChannel,
+  type UserSession,
+  type VoiceChannel,
+} from '@sausixudos/shared';
 import {
   ConnectionState,
   LocalParticipant,
@@ -204,15 +214,8 @@ function participantAccentColor(
   ownAccentColor: AccentColor,
 ): AccentColor | undefined {
   if (participant instanceof LocalParticipant) return ownAccentColor;
-  try {
-    const metadata = participant.metadata ? (JSON.parse(participant.metadata) as { accentColor?: unknown }) : null;
-    const color = metadata?.accentColor;
-    return typeof color === 'string' && (ACCENT_COLORS as readonly string[]).includes(color)
-      ? (color as AccentColor)
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  const metadata = parseParticipantMetadata(participant.metadata);
+  return metadata?.participantType === 'HUMAN' ? metadata.accentColor : undefined;
 }
 
 function DeviceMenu({
@@ -343,6 +346,7 @@ function ChannelButton({
             ownAvatarUrl={ownAvatarUrl}
           />
           <span className="channel-user-name">{participant.name}</span>
+          {participant.participantType === 'BOT' && <span className="bot-badge">BOT</span>}
           {participant.isSharingScreen && <span className="live-badge live-badge-inline">AO VIVO</span>}
         </div>
       ))}
@@ -367,6 +371,8 @@ function ParticipantRow({
 }) {
   const name = participant.name || participant.identity;
   const local = participant instanceof LocalParticipant;
+  const metadata = parseParticipantMetadata(participant.metadata);
+  const isBot = metadata?.participantType === 'BOT';
   const avatarUrl = useRemoteAvatar(participant, ownAvatarUrl);
   const microphone = participant.getTrackPublication(Track.Source.Microphone);
   const muted = !microphone || microphone.isMuted;
@@ -379,9 +385,10 @@ function ParticipantRow({
         <div className="participant-copy">
           <strong>
             {name}{local ? ' (você)' : ''}
+            {isBot && <span className="bot-badge">BOT</span>}
             {isSharingScreen && <span className="live-badge" title="Compartilhando a tela">AO VIVO</span>}
           </strong>
-          <span>{speaking ? 'Falando' : muted ? 'Microfone desligado' : 'Conectado'}</span>
+          <span>{speaking ? (isBot ? 'Tocando' : 'Falando') : isBot ? 'Ocioso' : muted ? 'Microfone desligado' : 'Conectado'}</span>
         </div>
         {muted && <MicOffIcon className="participant-muted" size={14} />}
       </div>
@@ -639,6 +646,7 @@ function SettingsModal({
   setPttKeyBinding,
   micProfile,
   setMicProfile,
+  krispSupported,
   noiseSuppressionEnabled,
   setNoiseSuppression,
   echoCancellationEnabled,
@@ -707,6 +715,7 @@ function SettingsModal({
   setPttKeyBinding: (code: string) => void;
   micProfile: MicProfile;
   setMicProfile: (profile: MicProfile) => void;
+  krispSupported: boolean;
   noiseSuppressionEnabled: boolean;
   setNoiseSuppression: (enabled: boolean) => void;
   echoCancellationEnabled: boolean;
@@ -1026,7 +1035,11 @@ function SettingsModal({
                       <button type="button" className={`input-mode-card ${micProfile === 'isolamento' ? 'active' : ''}`} onClick={() => setMicProfile('isolamento')}>
                         <MicIcon size={18} />
                         <strong>Isolamento de Voz</strong>
-                        <span>Só a sua voz: o navegador filtra ruído, eco e ajusta o ganho automaticamente.</span>
+                        <span>
+                          {krispSupported
+                            ? 'Só a sua voz: roda o Krisp (o mesmo motor de IA do Discord) localmente pra remover ruído de fundo de verdade.'
+                            : 'Só a sua voz: seu navegador não suporta o motor de IA, então usamos a supressão nativa dele como alternativa.'}
+                        </span>
                       </button>
                       <button type="button" className={`input-mode-card ${micProfile === 'estudio' ? 'active' : ''}`} onClick={() => setMicProfile('estudio')}>
                         <SpeakerIcon size={18} />
@@ -1047,7 +1060,11 @@ function SettingsModal({
                     <div className="settings-toggle-row voice-processing-toggle">
                       <div>
                         <span className="settings-label">Supressão de ruído</span>
-                        <p className="settings-hint">Reduz ventilador, teclado e ruídos constantes (não temos o Krisp do Discord — isso liga o filtro nativo do navegador).</p>
+                        <p className="settings-hint">
+                          {krispSupported
+                            ? 'Krisp de verdade rodando localmente (mesmo motor de IA do Discord) — reduz ventilador, teclado, cliques e ruído de fundo constante.'
+                            : 'Seu navegador não suporta o motor de IA do Krisp; isso liga a supressão nativa dele como alternativa, mais fraca contra ruídos como teclado.'}
+                        </p>
                       </div>
                       <button
                         type="button"
@@ -1383,11 +1400,14 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [volumes, setVolumes] = useState<Record<string, number>>({});
   const [streamVolumes, setStreamVolumes] = useState<Record<string, number>>({});
   const [watchingScreenIds, setWatchingScreenIds] = useState<Set<string>>(new Set());
-  // Por padrão, mutamos os outros localmente pra evitar vazar a voz deles de
-  // volta pra dentro da transmissão (captura por loopback pega tudo que sai
-  // pelo alto-falante). Esse toggle deixa quem está transmitindo optar por
-  // continuar ouvindo mesmo assim, assumindo o risco de vazamento.
-  const [allowListenWhileSharing, setAllowListenWhileSharing] = useState(false);
+  // restrictOwnAudio (na captura de áudio da transmissão, useVoiceRoom.ts) já
+  // pede pro Chromium excluir o áudio do nosso próprio app do que é capturado
+  // por loopback — isso deveria impedir a voz de qualquer um na call (a sua
+  // inclusive) de vazar de volta pela transmissão de quem compartilha, sem
+  // precisar mutar ninguém localmente. Mantemos esse toggle como válvula de
+  // escape manual só caso o filtro do navegador não elimine 100% do vazamento
+  // em algum ambiente.
+  const [allowListenWhileSharing, setAllowListenWhileSharing] = useState(true);
   const [chatText, setChatText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -1590,12 +1610,6 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     try {
       await voice.sendMessage(chatText);
       setChatText('');
-      // O bot de música só entra no canal quando alguém usa um comando —
-      // ele não recebe isso pelo canal de dados do LiveKit porque não
-      // está na sala ainda, então avisamos ele por fora (API -> bot).
-      if (text.startsWith('/') && voice.currentChannel) {
-        void api.sendMusicCommand(voice.currentChannel.id, text).catch(() => {});
-      }
     } catch {
       // O estado da conexão informa quando o envio está indisponível.
     }
@@ -1663,6 +1677,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         onCancelProfile={resetProfileDraft}
         onSignOut={() => void voice.disconnect().finally(onSignOut)}
         micProfile={voice.micProfile}
+        krispSupported={voice.krispSupported}
         setMicProfile={voice.setMicProfile}
         echoCancellationEnabled={voice.echoCancellationEnabled}
         setEchoCancellation={voice.setEchoCancellation}
@@ -1893,7 +1908,12 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         </header>
 
         {activeTextChannel ? (
-          <TextChannelView channel={activeTextChannel} session={session} messageStyle={messageStyle} />
+          <TextChannelView
+            channel={activeTextChannel}
+            session={session}
+            messageStyle={messageStyle}
+            voiceChannelId={voice.currentChannel?.id ?? null}
+          />
         ) : (
         <>
         {voice.error && (
@@ -1909,11 +1929,11 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           <div className="audio-permission share-audio-notice">
             <span>
               {allowListenWhileSharing
-                ? 'Compartilhando com áudio do sistema — você optou por continuar ouvindo os outros, então a voz deles pode vazar na sua transmissão.'
-                : 'Compartilhando com áudio do sistema — a voz dos outros está muda só pra você, pra não vazar na sua transmissão.'}
+                ? 'Compartilhando com áudio do sistema — a call é filtrada antes de ir pra transmissão, então ninguém deveria ouvir a própria voz de volta.'
+                : 'Compartilhando com áudio do sistema — a voz dos outros está muda só pra você, pra garantir que não vaze na sua transmissão.'}
             </span>
             <button type="button" className="share-audio-notice-toggle" onClick={() => setAllowListenWhileSharing((current) => !current)}>
-              {allowListenWhileSharing ? 'Voltar a mutar' : 'Ouvir mesmo assim'}
+              {allowListenWhileSharing ? 'Ainda ouço eco — mutar os outros' : 'Voltar a ouvir todo mundo'}
             </button>
           </div>
         )}
@@ -2033,7 +2053,10 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                     <Avatar name={message.senderName} avatarUrl={senderAvatar} compact />
                     <div>
                       <header>
-                        <strong>{message.senderName}</strong>
+                        <strong>
+                          {message.senderName}
+                          {message.senderId === MUSIC_BOT_IDENTITY && <span className="bot-badge">BOT</span>}
+                        </strong>
                         <time>{new Date(message.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time>
                       </header>
                       <p>{message.text}</p>
