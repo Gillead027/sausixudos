@@ -23,7 +23,9 @@ import {
   CHAT_MESSAGE_MAX_LENGTH,
   MUSIC_BOT_DISPLAY_NAME,
   MUSIC_BOT_IDENTITY,
+  parseParticipantMetadata,
   VOICE_CHAT_TOPIC,
+  type Activity,
   type ChatMessage,
   type VoiceChannel,
 } from '@sausixudos/shared';
@@ -297,6 +299,11 @@ export function useVoiceRoom() {
   const inputSensitivityRef = useRef(inputSensitivity);
   const deafenedRef = useRef(false);
   const krispProcessorRef = useRef<KrispNoiseFilterProcessor | null>(null);
+  // Última atividade conhecida (jogo/mídia), reportada pelo app desktop —
+  // guardada aqui pra poder ser aplicada assim que uma conexão é aberta,
+  // já que o metadata inicial do token sempre chega com activity: null (o
+  // servidor não tem como saber o que está rodando na sua máquina).
+  const lastActivityRef = useRef<Activity | null>(null);
   // Suprime os sons de entrada/saída pra quem já estava no canal antes de
   // você conectar — sem isso, entrar numa call cheia tocaria um bipe pra
   // cada pessoa já presente, tudo de uma vez.
@@ -488,6 +495,25 @@ export function useVoiceRoom() {
     };
   }, [room, syncRoom]);
 
+  // Publica a atividade (jogo/mídia) no próprio metadata do participante —
+  // setMetadata dispara ParticipantMetadataChanged pra todo mundo na sala
+  // (o listener já registrado acima chama syncRoom sozinho), sem precisar
+  // de nenhum canal separado pra isso.
+  const applyActivity = useCallback(
+    (activity: Activity | null) => {
+      lastActivityRef.current = activity;
+      if (room.state !== ConnectionState.Connected) return;
+      const current = parseParticipantMetadata(room.localParticipant.metadata);
+      if (!current || current.participantType !== 'HUMAN') return;
+      void room.localParticipant.setMetadata(JSON.stringify({ ...current, activity }));
+    },
+    [room],
+  );
+
+  useEffect(() => {
+    return window.desktop?.onActivityChanged?.(applyActivity);
+  }, [applyActivity]);
+
   const refreshDevices = useCallback(async () => {
     const [inputs, outputs, cameras] = await Promise.allSettled([
       Room.getLocalDevices('audioinput'),
@@ -662,6 +688,11 @@ export function useVoiceRoom() {
           setError(`${await describeMediaError(mediaError, 'microphone')} Você entrou com o microfone desligado.`);
         }
         syncRoom();
+        // O token sempre chega com activity: null (o servidor não sabe o que
+        // está rodando na sua máquina) — aplica a última atividade conhecida
+        // assim que a conexão abre, senão ela só apareceria pros outros na
+        // próxima vez que o app desktop detectasse uma mudança.
+        applyActivity(lastActivityRef.current);
         // Toca só agora, depois do mic já publicado (ou já ter desistido dele)
         // — é o mesmo ponto em que a tela de "Entrando na sala..." some, então
         // o som acompanha o momento real em que você está dentro, em vez de
@@ -678,7 +709,7 @@ export function useVoiceRoom() {
         );
       }
     },
-    [currentChannel, room, syncRoom, refreshDevices],
+    [currentChannel, room, syncRoom, refreshDevices, applyActivity],
   );
 
   const disconnect = useCallback(async () => {

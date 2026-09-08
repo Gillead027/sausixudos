@@ -11,7 +11,10 @@
     "package": "node scripts/package.mjs"
   },
   "dependencies": {
-    "electron-updater": "^6.6.2"
+    "@sausixudos/shared": "0.1.0",
+    "electron-updater": "^6.6.2",
+    "ps-list": "^9.0.0",
+    "windows-media-sessions": "^1.0.3"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
@@ -25,6 +28,9 @@
     "appId": "com.sausixudos.desktop",
     "productName": "Sausixudos",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/windows-media-sessions/**/*"
+    ],
     "npmRebuild": false,
     "directories": {
       "output": "release"
@@ -53,11 +59,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

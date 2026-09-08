@@ -12,6 +12,7 @@ import {
 } from 'electron';
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { startActivityMonitor } from './activity.js';
 import { initAutoUpdater } from './updater.js';
 
 const debugLogPath = path.join(process.env.TEMP || process.env.TMP || '.', 'sausixudos-startup-debug.log');
@@ -66,6 +67,7 @@ interface PendingCapture {
 
 let mainWindow: BrowserWindow | null = null;
 let pendingCapture: PendingCapture | null = null;
+let stopActivityMonitor: (() => void) | null = null;
 // Fonte já escolhida pelo usuário via o botão "Compartilhar tela" do app (fluxo
 // proativo, ver share-picker:open) — quando presente, o handler de getDisplayMedia
 // a usa direto em vez de abrir o picker de novo reagindo à chamada do navegador.
@@ -531,6 +533,12 @@ if (hasSingleInstanceLock) {
       mainWindow.once('closed', () => {
         mainWindow = null;
       });
+      stopActivityMonitor = startActivityMonitor((activity) => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send('activity:changed', activity);
+        }
+      });
+      debugLog('startActivityMonitor done');
       initAutoUpdater();
       debugLog('initAutoUpdater done');
     } catch (error) {
@@ -545,7 +553,11 @@ app.on('window-all-closed', () => {
   debugLog('window-all-closed -> quit');
   app.quit();
 });
-app.on('before-quit', () => debugLog('before-quit'));
+app.on('before-quit', () => {
+  debugLog('before-quit');
+  stopActivityMonitor?.();
+  stopActivityMonitor = null;
+});
 app.on('will-quit', () => debugLog('will-quit'));
 app.on('quit', (_event, exitCode) => debugLog(`quit exitCode=${exitCode}`));
 app.on('child-process-gone', (_event, details) => debugLog(`child-process-gone: ${JSON.stringify(details)}`));

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { Activity } from '@sausixudos/shared';
 
 // Repassa exceções e rejeições não tratadas pro console.error, que o main
 // process já captura via webContents 'console-message' — sem isso, um erro
@@ -33,4 +34,9 @@ contextBridge.exposeInMainWorld('desktop', {
     ipcRenderer.invoke('media:get-access-status', mediaType),
   openMediaSettings: (mediaType: 'camera' | 'microphone'): Promise<boolean> =>
     ipcRenderer.invoke('media:open-settings', mediaType),
+  onActivityChanged: (listener: (activity: Activity | null) => void): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, activity: unknown) => listener(activity as Activity | null);
+    ipcRenderer.on('activity:changed', wrapped);
+    return () => ipcRenderer.removeListener('activity:changed', wrapped);
+  },
 });
