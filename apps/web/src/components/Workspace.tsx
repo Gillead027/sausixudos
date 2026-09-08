@@ -5,6 +5,7 @@ import {
   MUSIC_BOT_IDENTITY,
   parseParticipantMetadata,
   type AccentColor,
+  type Activity,
   type PublicConfig,
   type RoomSummary,
   type TextChannel,
@@ -127,6 +128,7 @@ declare global {
       onFullscreenChanged: (listener: (enabled: boolean) => void) => (() => void);
       getMediaAccessStatus: (mediaType: 'camera' | 'microphone') => Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'>;
       openMediaSettings: (mediaType: 'camera' | 'microphone') => Promise<boolean>;
+      onActivityChanged?: (listener: (activity: Activity | null) => void) => (() => void);
     };
   }
 }
@@ -138,6 +140,13 @@ function avatarLetter(name: string): string {
 function avatarColorIndex(name: string): number {
   const index = Array.from(name).reduce((value, character) => value + character.charCodeAt(0), 0);
   return index % ACCENT_COLORS.length;
+}
+
+function formatActivity(activity: Activity): string {
+  if (activity.kind === 'playing') return `Jogando ${activity.name}`;
+  return activity.artist
+    ? `Ouvindo ${activity.title} de ${activity.artist}`
+    : `Ouvindo ${activity.app} — ${activity.title}`;
 }
 
 export function Avatar({
@@ -415,9 +424,15 @@ function ParticipantRow({
             {isBot && <span className="bot-badge">BOT</span>}
           </strong>
           {/* Sem status de conexão/mudo/transmissão aqui — isso mora na lista
-              de canais de voz. Esta segunda linha é reservada pra atividade
-              de verdade (jogo, Spotify) quando esse recurso existir. */}
-          {isBot && <span>Ocioso</span>}
+              de canais de voz. Esta segunda linha mostra só atividade de
+              verdade (jogo/mídia detectados pelo app desktop). */}
+          {isBot ? (
+            <span>Ocioso</span>
+          ) : (
+            metadata?.participantType === 'HUMAN' && metadata.activity && (
+              <span>{formatActivity(metadata.activity)}</span>
+            )
+          )}
         </div>
       </button>
       {!local && (

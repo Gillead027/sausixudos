@@ -52,12 +52,30 @@ export interface AuthenticatedUserIdentity {
 
 export type ParticipantType = 'HUMAN' | 'BOT';
 
+export interface PlayingActivity {
+  kind: 'playing';
+  name: string;
+}
+
+export interface ListeningActivity {
+  kind: 'listening';
+  app: string;
+  title: string;
+  artist: string;
+}
+
+export type Activity = PlayingActivity | ListeningActivity;
+
 export interface HumanParticipantMetadata {
   app: 'sausixudos';
   participantType: 'HUMAN';
   userId: string;
   accentColor: AccentColor;
   statusText: string;
+  // Detectada localmente pelo app desktop (jogo em execução / mídia tocando
+  // no Windows) e publicada ao vivo via room.localParticipant.setMetadata —
+  // por isso é sempre null no metadata inicial do token (ver apps/api).
+  activity: Activity | null;
 }
 
 export interface BotParticipantMetadata {
@@ -67,6 +85,23 @@ export interface BotParticipantMetadata {
 }
 
 export type ParticipantMetadata = HumanParticipantMetadata | BotParticipantMetadata;
+
+function parseActivity(value: unknown): Activity | null {
+  if (!value || typeof value !== 'object') return null;
+  const activity = value as Record<string, unknown>;
+  if (activity.kind === 'playing' && typeof activity.name === 'string') {
+    return { kind: 'playing', name: activity.name };
+  }
+  if (
+    activity.kind === 'listening' &&
+    typeof activity.app === 'string' &&
+    typeof activity.title === 'string' &&
+    typeof activity.artist === 'string'
+  ) {
+    return { kind: 'listening', app: activity.app, title: activity.title, artist: activity.artist };
+  }
+  return null;
+}
 
 export function parseParticipantMetadata(value: string | undefined): ParticipantMetadata | null {
   if (!value) return null;
@@ -96,6 +131,7 @@ export function parseParticipantMetadata(value: string | undefined): Participant
         userId: metadata.userId,
         accentColor: metadata.accentColor as AccentColor,
         statusText: metadata.statusText,
+        activity: parseActivity(metadata.activity),
       };
     }
   } catch {

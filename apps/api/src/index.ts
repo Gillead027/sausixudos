@@ -409,6 +409,10 @@ app.post('/api/livekit/token', requireSession, async (request, response) => {
     userId: user.id,
     accentColor: user.accentColor,
     statusText: user.statusText,
+    // Atividade (jogo/mídia) é detectada em tempo real pelo app desktop, não
+    // dá pra saber no momento de emitir o token — começa nula e é publicada
+    // depois via room.localParticipant.setMetadata (por isso canUpdateOwnMetadata).
+    activity: null,
   };
   const accessToken = new AccessToken(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET, {
     identity: user.id,
@@ -422,6 +426,7 @@ app.post('/api/livekit/token', requireSession, async (request, response) => {
     canPublish: true,
     canSubscribe: true,
     canPublishData: true,
+    canUpdateOwnMetadata: true,
   });
 
   const payload: LiveKitTokenResponse = {
