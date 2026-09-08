@@ -31,7 +31,15 @@ import { api } from '../api';
 import { getOutputVolume } from '../appearancePrefs';
 import { describeMediaError } from '../mediaAccess';
 import { routeVoiceChatInput } from '../musicCommandRouting';
-import { playJoinSound, playLeaveSound, playMessageSound } from '../sounds';
+import {
+  playJoinSound,
+  playLeaveSound,
+  playMessageSound,
+  playMicMuteSound,
+  playMicUnmuteSound,
+  playScreenShareStartSound,
+  playScreenShareStopSound,
+} from '../sounds';
 
 export type ShareQuality = '720p30' | '720p60' | '1080p60';
 export type InputMode = 'voice' | 'ptt';
@@ -408,8 +416,14 @@ export function useVoiceRoom() {
       syncRoom();
     };
     // Cobre o caso de parar o compartilhamento pela barra nativa do Windows/
-    // navegador em vez do nosso botão — sem isso, o mudo ficava travado.
+    // navegador em vez do nosso botão — sem isso, o mudo ficava travado. É
+    // também o único lugar que toca o som de "parar transmissão": tanto o
+    // botão quanto a barra nativa acabam disparando este mesmo evento, então
+    // tocar o som aqui (em vez de no botão também) evita ele tocar em dobro.
     const onLocalTrackUnpublished = (publication: TrackPublication) => {
+      if (publication.source === Track.Source.ScreenShare) {
+        playScreenShareStopSound(getOutputVolume());
+      }
       if (publication.source === Track.Source.ScreenShare || publication.source === Track.Source.ScreenShareAudio) {
         setShareAudioActive(false);
       }
@@ -683,6 +697,7 @@ export function useVoiceRoom() {
         enabled,
         enabled ? currentMicCaptureOptions() : undefined,
       );
+      (enabled ? playMicUnmuteSound : playMicMuteSound)(getOutputVolume());
       syncRoom();
     } catch (mediaError) {
       setError(await describeMediaError(mediaError, 'microphone'));
@@ -868,6 +883,7 @@ export function useVoiceRoom() {
             room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio),
           );
           setShareAudioActive(audioPublished);
+          playScreenShareStartSound(getOutputVolume());
         }
         syncRoom();
       } catch (mediaError) {
