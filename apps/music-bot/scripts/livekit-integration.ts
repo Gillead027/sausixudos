@@ -20,6 +20,9 @@ import { authorizeMusicCommand } from '../../api/src/musicCommands.js';
 import { BotVoiceParticipant } from '../src/botVoiceParticipant.js';
 import { config } from '../src/config.js';
 import { MusicSessionManager } from '../src/musicSession.js';
+import { MusicProviderRegistry } from '../src/musicProvider.js';
+import { YouTubeProvider } from '../src/youtubeProvider.js';
+import { YtDlpClient } from '../src/ytDlpClient.js';
 
 const roomName = `sausimusic-integration-${randomUUID().slice(0, 8)}`;
 const subscribers = [new Room(), new Room()];
@@ -33,6 +36,7 @@ interface AudioMonitor {
   botSpoke: boolean;
   botSpeaking: boolean;
   streamTasks: Promise<void>[];
+  rmsValues: number[];
 }
 
 async function mintSubscriberToken(identity: string): Promise<string> {
@@ -82,6 +86,11 @@ function waitForCondition(check: () => boolean, label: string, timeoutMs = 10_00
   });
 }
 
+function recentRms(monitor: AudioMonitor, count = 10): number {
+  const values = monitor.rmsValues.slice(-count);
+  return values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
+}
+
 function monitorBotAudio(room: Room, clientName: string): AudioMonitor {
   const monitor: AudioMonitor = {
     nonSilentFrames: 0,
@@ -91,6 +100,7 @@ function monitorBotAudio(room: Room, clientName: string): AudioMonitor {
     botSpoke: false,
     botSpeaking: false,
     streamTasks: [],
+    rmsValues: [],
   };
 
   room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
@@ -119,6 +129,10 @@ function monitorBotAudio(room: Room, clientName: string): AudioMonitor {
           const result = await reader.read();
           if (result.done) return;
           if (result.value.data.some((sample) => sample !== 0)) monitor.nonSilentFrames += 1;
+          let energy = 0;
+          for (const sample of result.value.data) energy += sample * sample;
+          monitor.rmsValues.push(Math.sqrt(energy / Math.max(1, result.value.data.length)));
+          if (monitor.rmsValues.length > 500) monitor.rmsValues.shift();
         }
       } finally {
         reader.releaseLock();
@@ -137,10 +151,15 @@ const manager = new MusicSessionManager(
       livekitUrl: config.LIVEKIT_INTERNAL_URL,
       apiKey: config.LIVEKIT_API_KEY,
       apiSecret: config.LIVEKIT_API_SECRET,
+      ffmpegPath: config.FFMPEG_PATH,
+      ytdlpPath: config.YTDLP_PATH,
+      ytdlpPluginDir: config.YTDLP_PLUGIN_DIR,
+      ytdlpPotBaseUrl: config.YTDLP_POT_BASE_URL,
       log: (event, values) => console.log(`[INTEGRATION] ${event}`, values),
       lifecycle,
     }),
   (event, values) => console.log(`[INTEGRATION] ${event}`, values),
+  new MusicProviderRegistry([new YouTubeProvider(new YtDlpClient(config.YTDLP_PATH))], 'youtube'),
 );
 const roomService = new RoomServiceClient(
   config.LIVEKIT_INTERNAL_URL,
@@ -162,7 +181,7 @@ try {
 
   const authorization = await authorizeMusicCommand({
     roomId: roomName,
-    text: '/play-file',
+    text: '/play Numb Linkin Park',
     channels: [{ id: roomName, name: 'Integração', description: 'Teste isolado' }],
     requester,
     listParticipantIdentities: async (canonicalRoomName) =>
@@ -171,47 +190,56 @@ try {
   assert.equal(authorization.ok, true);
   assert.ok(authorization.ok);
 
-  assert.match((await manager.execute(authorization.command)).message, /começou a tocar/);
+  const firstPlay = await manager.execute(authorization.command);
+  assert.match(firstPlay.message, /Numb/i);
+  assert.equal(firstPlay.nowPlaying?.providerId, 'youtube');
+  assert.equal(manager.getSession(roomName)?.currentTrack?.source, 'EXTERNAL_PROVIDER');
   await waitForCondition(
-    () => monitors.every(({ nonSilentFrames }) => nonSilentFrames >= 10),
-    'áudio inicial nos dois clientes',
+    () => (manager.getSession(roomName)?.positionMs ?? 0) >= 400,
+    'fonte externa realmente começar a decodificar',
+    25_000,
   );
-  await waitForCondition(() => monitors.every(({ botSpoke }) => botSpoke), 'speaking nos dois clientes');
-
+  await waitForCondition(
+    () => monitors.every((monitor) => recentRms(monitor) >= 0.5),
+    'áudio real nos dois clientes',
+    10_000,
+  );
   await manager.execute(command('/play-file'));
   assert.equal(manager.getSession(roomName)?.queue.length, 1);
 
+  const playingRms = monitors.map(recentRms);
   assert.match((await manager.execute(command('/pause'))).message, /pausada/i);
+  // Dá tempo para pacotes já entregues ao SFU drenarem; o pause bloqueia novos frames.
+  await delay(300);
   const pausedPosition = manager.getSession(roomName)?.positionMs;
-  await waitForCondition(
-    () => monitors.every(({ botSpeaking }) => !botSpeaking),
-    'speaking cessar após pause',
-    3_000,
-  );
-  assert.equal(manager.getSession(roomName)?.positionMs, pausedPosition);
-  const framesAfterPauseDrain = monitors.map(({ nonSilentFrames }) => nonSilentFrames);
   await delay(400);
+  assert.equal(manager.getSession(roomName)?.positionMs, pausedPosition);
+  const pausedRms = monitors.map(recentRms);
+  console.log('[INTEGRATION] pause-rms', { position: pausedPosition, playingRms, pausedRms });
   assert.ok(
-    monitors.every((monitor, index) => monitor.nonSilentFrames <= (framesAfterPauseDrain[index] ?? 0) + 1),
-    'pause continuou entregando áudio não silencioso',
+    pausedRms.every((value, index) => value <= Math.max(0.2, (playingRms[index] ?? 1) * 0.25)),
+    'pause não reduziu o áudio recebido para o piso de silêncio/concealment',
   );
 
   assert.match((await manager.execute(command('/resume'))).message, /retomada/i);
   await waitForCondition(
-    () => monitors.every((monitor, index) => monitor.nonSilentFrames >= (framesAfterPauseDrain[index] ?? 0) + 5),
+    () => monitors.every((monitor) => recentRms(monitor) >= 0.5),
     'áudio após resume',
   );
-  await waitForCondition(() => monitors.every(({ botSpeaking }) => botSpeaking), 'speaking após resume');
   assert.ok((manager.getSession(roomName)?.positionMs ?? 0) > (pausedPosition ?? 0));
 
   const tracksBeforeSkip = monitors.map(({ subscribedTracks }) => subscribedTracks);
-  assert.match((await manager.execute(command('/skip'))).message, /Test Tone #2/);
+  await manager.execute(command('/volume 50'));
+  assert.equal(manager.getSession(roomName)?.volume, 50);
+  assert.match((await manager.execute(command('/skip'))).message, /Test Tone #1/);
   await waitForCondition(
     () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeSkip[index] ?? 0)),
     'track seguinte após skip',
   );
-  assert.equal(manager.getSession(roomName)?.currentTrack?.title, 'Test Tone #2');
+  assert.equal(manager.getSession(roomName)?.currentTrack?.title, 'Test Tone #1');
   assert.equal(manager.getSession(roomName)?.queue.length, 0);
+  await waitForCondition(() => monitors.every(({ botSpoke }) => botSpoke), 'speaking do tom diagnóstico', 10_000);
+  await waitForCondition(() => monitors.every(({ botSpeaking }) => botSpeaking), 'speaking ativo no tom diagnóstico', 5_000);
 
   const tracksBeforeStop = monitors.map(({ unsubscribedTracks }) => unsubscribedTracks);
   await manager.execute(command('/stop'));
@@ -222,11 +250,46 @@ try {
   assert.equal(manager.getSession(roomName)?.state, 'STOPPED');
   assert.equal(manager.getSession(roomName)?.currentTrack, null);
 
-  const tracksBeforeReplay = monitors.map(({ subscribedTracks }) => subscribedTracks);
-  await manager.execute(command('/play-file'));
+  const tracksBeforeLocal = monitors.map(({ subscribedTracks }) => subscribedTracks);
+  const framesBeforeLocal = monitors.map(({ nonSilentFrames }) => nonSilentFrames);
+  assert.match((await manager.execute(command('/play-local'))).message, /FFmpeg Local Test/);
+  assert.equal(manager.getSession(roomName)?.currentTrack?.source, 'LOCAL_FFMPEG_FILE');
   await waitForCondition(
-    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeReplay[index] ?? 0)),
-    'novo play após stop',
+    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeLocal[index] ?? 0)),
+    'track FFmpeg local',
+  );
+  await waitForCondition(
+    () => monitors.every((monitor, index) => monitor.nonSilentFrames >= (framesBeforeLocal[index] ?? 0) + 5),
+    'áudio FFmpeg nos dois clientes',
+  );
+
+  assert.match((await manager.execute(command('/pause'))).message, /pausada/i);
+  const localPausedPosition = manager.getSession(roomName)?.positionMs ?? 0;
+  await delay(250);
+  assert.equal(manager.getSession(roomName)?.positionMs, localPausedPosition);
+  assert.match((await manager.execute(command('/resume'))).message, /retomada/i);
+  await waitForCondition(
+    () => (manager.getSession(roomName)?.positionMs ?? 0) > localPausedPosition,
+    'posição FFmpeg avançar após resume',
+  );
+  await manager.execute(command('/volume 25'));
+  assert.equal(manager.getSession(roomName)?.volume, 25);
+
+  await manager.execute(command('/play-file'));
+  assert.equal(manager.getSession(roomName)?.queue.length, 1);
+  const tracksBeforeLocalSkip = monitors.map(({ subscribedTracks }) => subscribedTracks);
+  assert.match((await manager.execute(command('/skip'))).message, /Test Tone/);
+  await waitForCondition(
+    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeLocalSkip[index] ?? 0)),
+    'próxima track após skip do FFmpeg',
+  );
+  await manager.execute(command('/stop'));
+
+  const tracksBeforeLocalLeave = monitors.map(({ subscribedTracks }) => subscribedTracks);
+  await manager.execute(command('/play-local'));
+  await waitForCondition(
+    () => monitors.every((monitor, index) => monitor.subscribedTracks > (tracksBeforeLocalLeave[index] ?? 0)),
+    'novo FFmpeg após stop',
   );
   assert.match((await manager.execute(command('/leave'))).message, /saiu do canal/);
   await waitForCondition(

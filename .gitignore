@@ -15,3 +15,5 @@ secrets/
 docker-compose.override.yml
 /infra/livekit.local.yaml
 /livekit.yaml
+
+.tools/

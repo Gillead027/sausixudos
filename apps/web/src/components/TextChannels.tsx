@@ -3,12 +3,14 @@ import {
   CHAT_MESSAGE_MAX_LENGTH,
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
+  type MusicCommandResponse,
   type TextChannel,
   type TextMessage,
   type UserSession,
 } from '@sausixudos/shared';
 import { api } from '../api';
 import { routeTextChannelInput } from '../musicCommandRouting';
+import { MusicCard } from './MusicCard';
 import { CloseIcon, MessageIcon, SearchIcon, VoiceIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
@@ -97,7 +99,7 @@ export function TextChannelView({
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [feedback, setFeedback] = useState('');
+  const [feedback, setFeedback] = useState<MusicCommandResponse | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -108,7 +110,7 @@ export function TextChannelView({
     setDraft('');
     setLoading(true);
     setError('');
-    setFeedback('');
+    setFeedback(null);
 
     const refresh = async () => {
       if (requestRunning) return;
@@ -147,7 +149,7 @@ export function TextChannelView({
     if (!text || sending) return;
     setSending(true);
     setError('');
-    setFeedback('');
+    setFeedback(null);
     try {
       const result = await routeTextChannelInput({
         text,
@@ -160,7 +162,7 @@ export function TextChannelView({
         setMessages((current) => current.some(({ id }) => id === message.id) ? current : [...current, message]);
         window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
       } else {
-        setFeedback(result.response.message);
+        setFeedback(result.response);
       }
       setDraft('');
       inputRef.current?.focus();
@@ -174,7 +176,7 @@ export function TextChannelView({
   return (
     <section className="text-channel-view" aria-label={`Canal de texto ${channel.name}`}>
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
-      {feedback && <div className="audio-permission" role="status"><span>{feedback}</span></div>}
+      {feedback && <div className="music-command-feedback" role="status"><span>{feedback.message}</span>{feedback.nowPlaying && <MusicCard card={feedback.nowPlaying} />}</div>}
       <div
         className={`messages text-channel-messages ${messageStyle === 'compact' ? 'compact' : ''} ${messageStyle === 'grouped' ? 'grouped' : ''}`}
         role="log"
