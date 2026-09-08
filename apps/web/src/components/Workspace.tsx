@@ -1248,7 +1248,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [rooms, setRooms] = useState<RoomSummary[]>(config.channels.map((channel) => ({ ...channel, participants: [] })));
   const [livekitAvailable, setLivekitAvailable] = useState(true);
   const [joiningId, setJoiningId] = useState<string | null>(null);
-  const [quality, setQuality] = useState<ShareQuality>('720p60');
+  const [quality, setQuality] = useState<ShareQuality>('1080p60');
   const [volumes, setVolumes] = useState<Record<string, number>>({});
   const [streamVolumes, setStreamVolumes] = useState<Record<string, number>>({});
   const [watchingScreenIds, setWatchingScreenIds] = useState<Set<string>>(new Set());

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AudioPresets,
   ConnectionState,
   LocalAudioTrack,
   LocalParticipant,
@@ -9,6 +10,7 @@ import {
   RoomEvent,
   Track,
   TrackPublication,
+  VideoPresets,
   type ScreenShareCaptureOptions,
   type TrackPublishOptions,
 } from 'livekit-client';
@@ -50,21 +52,45 @@ function loadPttKey(): string {
   return localStorage.getItem(PTT_KEY_KEY) || DEFAULT_PTT_KEY;
 }
 
+// echoCancellation/noiseSuppression/autoGainControl são DSP de voz — aplicados
+// no áudio do sistema/aba (jogo, música, vídeo), eles abafam e comprimem o som
+// exatamente como um microfone de telefone, o efeito de "dentro de uma caixa"
+// que estava sendo reportado. Áudio de tela não é voz, então desligamos os três.
+const SCREEN_SHARE_AUDIO_CAPTURE = {
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
+} as const;
+
+// audioPreset padrão do LiveKit pra qualquer publicação de áudio é otimizado
+// pra voz (bitrate baixo); música/jogo precisa de um preset de música de
+// verdade — e dtx (que trata trechos "quietos" como silêncio e para de
+// mandar dados) corta partes baixas de música, então fica desligado aqui.
+const SCREEN_SHARE_AUDIO_PUBLISH = {
+  audioPreset: AudioPresets.musicHighQualityStereo,
+  dtx: false,
+  red: true,
+} as const;
+
 const shareSettings: Record<
   ShareQuality,
   { capture: ScreenShareCaptureOptions; publish: TrackPublishOptions }
 > = {
   '720p30': {
-    capture: { audio: true, resolution: { width: 1280, height: 720, frameRate: 30 } },
-    publish: { videoEncoding: { maxBitrate: 3_000_000, maxFramerate: 30 }, simulcast: true },
+    capture: { audio: SCREEN_SHARE_AUDIO_CAPTURE, resolution: { width: 1280, height: 720, frameRate: 30 } },
+    // simulcast (várias camadas de qualidade) é ótimo pra câmera vista por
+    // gente com conexões bem diferentes, mas pra tela compartilhada, com
+    // texto/detalhe, só atrapalha — o SFU pode escolher uma camada mais
+    // fraca por padrão. Uma única camada de alta qualidade fica mais nítida.
+    publish: { videoEncoding: { maxBitrate: 4_000_000, maxFramerate: 30 }, simulcast: false, ...SCREEN_SHARE_AUDIO_PUBLISH },
   },
   '720p60': {
-    capture: { audio: true, resolution: { width: 1280, height: 720, frameRate: 60 } },
-    publish: { videoEncoding: { maxBitrate: 5_000_000, maxFramerate: 60 }, simulcast: true },
+    capture: { audio: SCREEN_SHARE_AUDIO_CAPTURE, resolution: { width: 1280, height: 720, frameRate: 60 } },
+    publish: { videoEncoding: { maxBitrate: 7_000_000, maxFramerate: 60 }, simulcast: false, ...SCREEN_SHARE_AUDIO_PUBLISH },
   },
   '1080p60': {
-    capture: { audio: true, resolution: { width: 1920, height: 1080, frameRate: 60 } },
-    publish: { videoEncoding: { maxBitrate: 8_000_000, maxFramerate: 60 }, simulcast: true },
+    capture: { audio: SCREEN_SHARE_AUDIO_CAPTURE, resolution: { width: 1920, height: 1080, frameRate: 60 } },
+    publish: { videoEncoding: { maxBitrate: 12_000_000, maxFramerate: 60 }, simulcast: false, ...SCREEN_SHARE_AUDIO_PUBLISH },
   },
 };
 
@@ -84,7 +110,10 @@ export function useVoiceRoom() {
   const [room] = useState(
     () =>
       new Room({
-        adaptiveStream: true,
+        // adaptiveStream reduz a resolução recebida com base no tamanho do
+        // elemento <video> na tela — útil pra economizar banda, mas troca
+        // nitidez por isso, e foi apontado como causa da imagem borrada.
+        adaptiveStream: false,
         dynacast: true,
         disconnectOnPageLeave: true,
         audioCaptureDefaults: microphoneCaptureOptions(initialNoiseSuppression.current),
@@ -429,7 +458,12 @@ export function useVoiceRoom() {
   const toggleCamera = useCallback(async () => {
     setError('');
     try {
-      await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled);
+      await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled, {
+        resolution: VideoPresets.h1080.resolution,
+      }, {
+        videoEncoding: VideoPresets.h1080.encoding,
+        simulcast: true,
+      });
       syncRoom();
     } catch (mediaError) {
       setError(await describeMediaError(mediaError, 'camera'));
@@ -444,7 +478,19 @@ export function useVoiceRoom() {
           await room.localParticipant.setScreenShareEnabled(false);
         } else {
           const settings = shareSettings[quality];
-          await room.localParticipant.setScreenShareEnabled(true, { ...settings.capture, audio: shareAudio }, settings.publish);
+          await room.localParticipant.setScreenShareEnabled(
+            true,
+            { ...settings.capture, audio: shareAudio ? SCREEN_SHARE_AUDIO_CAPTURE : false },
+            settings.publish,
+          );
+          // "detail" pede pro navegador priorizar nitidez espacial em vez de
+          // suavidade de movimento ao codificar — o certo pra texto/UI numa
+          // tela compartilhada, que não se move como um vídeo de câmera.
+          const screenTrack = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.videoTrack;
+          const mediaStreamTrack = screenTrack?.mediaStreamTrack;
+          if (mediaStreamTrack && 'contentHint' in mediaStreamTrack) {
+            mediaStreamTrack.contentHint = 'detail';
+          }
         }
         syncRoom();
       } catch (mediaError) {

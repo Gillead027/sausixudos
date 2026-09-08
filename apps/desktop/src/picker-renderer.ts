@@ -85,13 +85,15 @@ for (const tabButton of tabButtons) {
   });
 }
 
-resolutionSelect?.addEventListener('change', () => {
+function syncFpsForResolution(): void {
   // 1080p só existe a 60 FPS no app — trava o seletor de FPS quando essa resolução é escolhida.
-  if (!fpsSelect) return;
+  if (!fpsSelect || !resolutionSelect) return;
   const is1080 = resolutionSelect.value === '1080';
   fpsSelect.disabled = is1080;
   if (is1080) fpsSelect.value = '60';
-});
+}
+resolutionSelect?.addEventListener('change', syncFpsForResolution);
+syncFpsForResolution();
 
 cancelButton?.addEventListener('click', () => void window.capturePicker.cancel());
 confirmButton?.addEventListener('click', () => {
