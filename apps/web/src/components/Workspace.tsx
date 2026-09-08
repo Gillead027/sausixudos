@@ -68,6 +68,7 @@ import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
 import { ServerSettings } from './ServerSettings';
 import { CreateTextChannelDialog, TextChannelView } from './TextChannels';
+import { MusicCard } from './MusicCard';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 const MESSAGE_STYLE_KEY = 'gc:message-style';
@@ -2138,6 +2139,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                         <time>{new Date(message.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time>
                       </header>
                       <p>{message.text}</p>
+                      {message.musicCard && <MusicCard card={message.musicCard} />}
                     </div>
                   </article>
                 );

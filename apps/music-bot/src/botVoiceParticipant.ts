@@ -21,6 +21,8 @@ import {
   type ChatMessage,
 } from '@sausixudos/shared';
 import { FfmpegAudioSource } from './ffmpegAudioSource.js';
+import { YtDlpAudioSource } from './ytDlpAudioSource.js';
+import type { PlayableMusicSource } from './musicProvider.js';
 import {
   ProgrammaticAudioSource,
   TEST_AUDIO_CHANNELS,
@@ -53,6 +55,11 @@ export interface MusicVoiceParticipant {
     initialVolume: number,
     callbacks: PlaybackCallbacks,
   ) => Promise<MusicPlaybackHandle>;
+  startExternalAudio: (
+    playable: PlayableMusicSource,
+    initialVolume: number,
+    callbacks: PlaybackCallbacks,
+  ) => Promise<MusicPlaybackHandle>;
   stopAudio: () => Promise<void>;
   sendMessage: (text: string) => Promise<void>;
   disconnect: () => Promise<void>;
@@ -65,7 +72,7 @@ export interface VoiceLifecycleCallbacks {
 
 interface ActiveAudio {
   controller: AbortController;
-  fixture: ProgrammaticAudioSource | FfmpegAudioSource;
+  fixture: ProgrammaticAudioSource | FfmpegAudioSource | YtDlpAudioSource;
   source: AudioSource;
   track: LocalAudioTrack;
   publication: LocalTrackPublication;
@@ -79,6 +86,9 @@ interface BotVoiceParticipantOptions {
   apiKey: string;
   apiSecret: string;
   ffmpegPath: string;
+  ytdlpPath: string;
+  ytdlpPluginDir: string;
+  ytdlpPotBaseUrl: string;
   log: MusicLog;
   lifecycle: VoiceLifecycleCallbacks;
 }
@@ -169,14 +179,31 @@ export class BotVoiceParticipant implements MusicVoiceParticipant {
     );
   }
 
+  async startExternalAudio(
+    playable: PlayableMusicSource,
+    initialVolume: number,
+    callbacks: PlaybackCallbacks,
+  ): Promise<MusicPlaybackHandle> {
+    if (playable.transport !== 'YTDLP_PIPE') throw new Error('Transporte externo não suportado.');
+    return this.startAudioFixture(new YtDlpAudioSource({
+      webUrl: playable.input,
+      ytdlpPath: this.options.ytdlpPath,
+      ffmpegPath: this.options.ffmpegPath,
+      pluginDir: this.options.ytdlpPluginDir,
+      potBaseUrl: this.options.ytdlpPotBaseUrl,
+      initialVolume,
+    }), callbacks);
+  }
+
   private async startAudioFixture(
-    fixture: ProgrammaticAudioSource | FfmpegAudioSource,
+    fixture: ProgrammaticAudioSource | FfmpegAudioSource | YtDlpAudioSource,
     callbacks: PlaybackCallbacks,
   ): Promise<MusicPlaybackHandle> {
     if (!this.room.localParticipant) throw new Error('SausiMusic não está conectado à sala.');
     if (this.activeAudio) throw new Error('SausiMusic já possui uma track ativa nesta sala.');
 
-    const source = new AudioSource(TEST_AUDIO_SAMPLE_RATE, TEST_AUDIO_CHANNELS);
+    // Buffer curto: mantém pause/skip/stop responsivos sem acumular ~1s do padrão do SDK.
+    const source = new AudioSource(TEST_AUDIO_SAMPLE_RATE, TEST_AUDIO_CHANNELS, 100);
     const track = LocalAudioTrack.createAudioTrack(MUSIC_BOT_TRACK_NAME, source);
     const publishOptions = new TrackPublishOptions();
     publishOptions.source = TrackSource.SOURCE_MICROPHONE;

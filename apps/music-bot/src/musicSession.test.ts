@@ -8,8 +8,22 @@ import type {
   VoiceLifecycleCallbacks,
 } from './botVoiceParticipant.js';
 import { MusicSessionManager } from './musicSession.js';
+import { MusicProviderRegistry, type MusicProvider, type PlayableMusicSource } from './musicProvider.js';
 
 const requester = { id: 'user-1', displayName: 'Gillezin' };
+
+const fakeProvider: MusicProvider = {
+  id: 'youtube',
+  canHandleUrl: () => true,
+  search: async (query) => [{ providerId: 'youtube', sourceId: 'fake-id', title: query, author: 'Fake Artist', durationMs: 180000, webUrl: 'https://youtube.com/watch?v=fake', thumbnailUrl: undefined }],
+  resolveUrl: async () => ({ providerId: 'youtube', sourceId: 'fake-id', title: 'URL Track', author: 'Fake Artist', durationMs: 180000, webUrl: 'https://youtube.com/watch?v=fake', thumbnailUrl: undefined }),
+  resolvePlayable: async () => ({ input: 'https://youtube.com/watch?v=fake', providerId: 'youtube', transport: 'YTDLP_PIPE' }),
+  resolvePlaylist: async () => [
+    { providerId: 'youtube', sourceId: 'p1', title: 'Playlist One', author: 'Artist 1', durationMs: 120000, webUrl: 'https://youtube.com/watch?v=p1', thumbnailUrl: undefined },
+    { providerId: 'youtube', sourceId: 'p2', title: 'Playlist Two', author: 'Artist 2', durationMs: 130000, webUrl: 'https://youtube.com/watch?v=p2', thumbnailUrl: undefined },
+  ],
+};
+const fakeProviders = new MusicProviderRegistry([fakeProvider], 'youtube');
 
 function command(text: string, channelId = 'geral'): MusicBotCommandRequest {
   const parsed = parseMusicCommand(text);
@@ -49,6 +63,7 @@ class FakeVoiceParticipant implements MusicVoiceParticipant {
   connectCalls = 0;
   startCalls = 0;
   localStartCalls = 0;
+  externalStartCalls = 0;
   stopCalls = 0;
   disconnectCalls = 0;
   activePlaybacks = 0;
@@ -90,6 +105,15 @@ class FakeVoiceParticipant implements MusicVoiceParticipant {
     return this.playback;
   }
 
+  async startExternalAudio(
+    _playable: PlayableMusicSource,
+    initialVolume: number,
+    callbacks: PlaybackCallbacks,
+  ): Promise<MusicPlaybackHandle> {
+    this.externalStartCalls += 1;
+    return this.startTestAudio(initialVolume, callbacks);
+  }
+
   finishNaturally(): void {
     const callbacks = this.playbackCallbacks;
     assert.ok(callbacks);
@@ -114,7 +138,7 @@ class FakeVoiceParticipant implements MusicVoiceParticipant {
   }
 }
 
-function createHarness(startError?: Error) {
+function createHarness(startError?: Error, djUserIds: ReadonlySet<string> = new Set<string>()) {
   const participants: FakeVoiceParticipant[] = [];
   const lifecycles = new Map<string, VoiceLifecycleCallbacks>();
   const manager = new MusicSessionManager((context, callbacks) => {
@@ -122,7 +146,7 @@ function createHarness(startError?: Error) {
     const participant = new FakeVoiceParticipant(startError);
     participants.push(participant);
     return participant;
-  }, () => {});
+  }, () => {}, fakeProviders, djUserIds);
   return { manager, participants, lifecycles };
 }
 
@@ -400,5 +424,57 @@ describe('MusicSession player stateful', () => {
     await harness.manager.execute(command('/stop'));
     assert.equal(session.state, 'STOPPED');
   });
+
+  it('/playlist inicia primeira faixa e enfileira as demais', async () => {
+    const harness = createHarness();
+    const result = await harness.manager.execute(command('/playlist https://www.youtube.com/playlist?list=PL123'));
+    const session = harness.manager.getSession('geral');
+    assert.ok(session);
+    assert.match(result.message, /Playlist iniciada com 2 faixa/);
+    assert.equal(session.currentTrack?.title, 'Playlist One');
+    assert.equal(session.queue[0]?.title, 'Playlist Two');
+    assert.equal(result.nowPlaying?.title, 'Playlist One');
+  });
+
+  it('/history lista faixas já iniciadas em ordem recente', async () => {
+    const harness = createHarness();
+    await harness.manager.execute(command('/play-file'));
+    await harness.manager.execute(command('/play-file'));
+    const participant = harness.participants[0];
+    assert.ok(participant);
+    participant.finishNaturally();
+    await nextTurn();
+    const history = await harness.manager.execute(command('/history'));
+    assert.match(history.message, /Test Tone #2/);
+    assert.match(history.message, /Test Tone #1/);
+  });
+
+  it('restringe controles a DJs quando MUSIC_DJ_USER_IDS está configurado', async () => {
+    const harness = createHarness(undefined, new Set(['dj-user']));
+    await harness.manager.execute(command('/play-file'));
+    const denied = await harness.manager.execute(command('/skip'));
+    assert.match(denied.message, /restrito aos DJs/i);
+    assert.equal(harness.manager.getSession('geral')?.currentTrack?.title, 'Test Tone #1');
+    const djRequest = command('/stop');
+    djRequest.requestedBy = { id: 'dj-user', displayName: 'DJ' };
+    const allowed = await harness.manager.execute(djRequest);
+    assert.match(allowed.message, /parada/i);
+  });
+
+  it('/play resolve metadata e inicia fonte externa somente no playback', async () => {
+    const harness = createHarness();
+    const result = await harness.manager.execute(command('/play Numb Linkin Park'));
+    const session = harness.manager.getSession('geral');
+    const participant = harness.participants[0];
+    assert.ok(session && participant);
+    assert.match(result.message, /Numb Linkin Park/);
+    assert.equal(session.currentTrack?.source, 'EXTERNAL_PROVIDER');
+    assert.equal(participant.externalStartCalls, 1);
+    assert.equal(session.currentTrack?.durationMs, 180_000);
+    const now = await harness.manager.execute(command('/np'));
+    assert.match(now.message, /Numb Linkin Park/);
+    await harness.manager.execute(command('/stop'));
+  });
+
 
 });

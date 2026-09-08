@@ -4,6 +4,10 @@ import { isMusicBotCommandRequest } from '@sausixudos/shared';
 import { BotVoiceParticipant, type MusicLog } from './botVoiceParticipant.js';
 import { config } from './config.js';
 import { MusicSessionManager } from './musicSession.js';
+import { MusicProviderRegistry } from './musicProvider.js';
+import { YouTubeProvider } from './youtubeProvider.js';
+import { SpotifyProvider } from './spotifyProvider.js';
+import { YtDlpClient } from './ytDlpClient.js';
 
 const log: MusicLog = (event, context) => {
   const fields = Object.entries(context)
@@ -11,6 +15,13 @@ const log: MusicLog = (event, context) => {
     .join(' ');
   console.log(`[MUSIC] ${event}${fields ? ` ${fields}` : ''}`);
 };
+
+const youtubeProvider = new YouTubeProvider(new YtDlpClient(config.YTDLP_PATH));
+const providers = new MusicProviderRegistry([
+  youtubeProvider,
+  new SpotifyProvider(youtubeProvider),
+], 'youtube');
+const djUserIds = new Set(config.MUSIC_DJ_USER_IDS.split(',').map((id) => id.trim()).filter(Boolean));
 
 const sessionManager = new MusicSessionManager(
   (context, lifecycle) =>
@@ -20,10 +31,15 @@ const sessionManager = new MusicSessionManager(
       apiKey: config.LIVEKIT_API_KEY,
       apiSecret: config.LIVEKIT_API_SECRET,
       ffmpegPath: config.FFMPEG_PATH,
+      ytdlpPath: config.YTDLP_PATH,
+      ytdlpPluginDir: config.YTDLP_PLUGIN_DIR,
+      ytdlpPotBaseUrl: config.YTDLP_POT_BASE_URL,
       log,
       lifecycle,
     }),
   log,
+  providers,
+  djUserIds,
 );
 
 const server = createServer((request, response) => {

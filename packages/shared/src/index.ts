@@ -14,6 +14,7 @@ export const VOICE_CHAT_TOPIC = 'sausixudos-chat';
 export const MUSIC_BOT_IDENTITY = 'music-bot';
 export const MUSIC_BOT_DISPLAY_NAME = 'SausiMusic';
 export const MUSIC_BOT_TRACK_NAME = 'sausimusic-test-tone';
+export const MUSIC_PLAY_INPUT_MAX_LENGTH = 300;
 
 export const ACCENT_COLORS = [
   '#4e7960',
@@ -143,6 +144,9 @@ export function parseParticipantMetadata(value: string | undefined): Participant
 export const MUSIC_COMMAND_ALIASES = {
   'play-file': 'play-file',
   'play-local': 'play-local',
+  play: 'play',
+  playlist: 'playlist',
+  history: 'history',
   pause: 'pause',
   resume: 'resume',
   skip: 'skip',
@@ -161,6 +165,9 @@ export type MusicCommandPrefix = '/' | '!';
 export interface MusicCommandArgsByName {
   'play-file': Record<never, never>;
   'play-local': Record<never, never>;
+  play: { input: string };
+  playlist: { input: string };
+  history: Record<never, never>;
   pause: Record<never, never>;
   resume: Record<never, never>;
   skip: Record<never, never>;
@@ -190,6 +197,11 @@ export function parseMusicCommand(value: string): ParsedMusicCommand | null {
   const name = MUSIC_COMMAND_ALIASES[alias];
   const rawArgs = match[3]?.trim();
 
+  if (name === 'play' || name === 'playlist') {
+    if (!rawArgs || rawArgs.length > MUSIC_PLAY_INPUT_MAX_LENGTH) return null;
+    return { name, prefix, args: { input: rawArgs } };
+  }
+
   if (name === 'volume') {
     if (!rawArgs || !/^\d+$/.test(rawArgs)) return null;
     const volume = Number(rawArgs);
@@ -211,8 +223,22 @@ export function isMusicCommandInput(value: string): boolean {
   return Boolean(alias && Object.hasOwn(MUSIC_COMMAND_ALIASES, alias));
 }
 
+export interface MusicNowPlayingCard {
+  title: string;
+  author: string;
+  providerId: string;
+  durationMs: number;
+  positionMs: number;
+  requestedBy: string;
+  state: string;
+  volume: number;
+  thumbnailUrl?: string;
+  webUrl?: string;
+}
+
 export interface MusicCommandResponse {
   message: string;
+  nowPlaying?: MusicNowPlayingCard;
 }
 
 /** Contrato interno usado pela API para encaminhar um comando autenticado ao SausiMusic. */
@@ -242,6 +268,10 @@ export function isMusicBotCommandRequest(value: unknown): value is MusicBotComma
     typeof candidate.requestedBy.id === 'string' &&
     typeof candidate.requestedBy.displayName === 'string'
   ) {
+    if (candidate.command === 'play' || candidate.command === 'playlist') {
+      const input = (candidate.args as { input?: unknown }).input;
+      return Object.keys(candidate.args).length === 1 && typeof input === 'string' && input.trim().length > 0 && input.length <= MUSIC_PLAY_INPUT_MAX_LENGTH;
+    }
     if (candidate.command === 'volume') {
       const volume = (candidate.args as { volume?: unknown }).volume;
       return (
@@ -308,6 +338,7 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   sentAt: number;
+  musicCard?: MusicNowPlayingCard;
 }
 
 export interface TextChannel {

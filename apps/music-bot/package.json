@@ -7,10 +7,12 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
-    "test": "node --import tsx --test src/commandParsing.test.ts src/musicSession.test.ts src/programmaticAudioSource.test.ts src/ffmpegAudioSource.test.ts",
+    "test": "node --import tsx --test src/commandParsing.test.ts src/musicSession.test.ts src/programmaticAudioSource.test.ts src/ffmpegAudioSource.test.ts src/musicProvider.test.ts src/spotifyProvider.test.ts",
     "test:ffmpeg": "node --import tsx scripts/ffmpeg-local.ts",
+    "test:provider": "node --import tsx scripts/provider-test.ts",
     "test:integration": "node --import tsx scripts/livekit-integration.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test:advanced": "node --import tsx scripts/advanced-provider-test.ts"
   },
   "dependencies": {
     "@livekit/rtc-node": "^0.13.34",

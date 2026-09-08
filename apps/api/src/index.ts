@@ -469,19 +469,19 @@ app.post('/api/music/command', requireSession, async (request, response) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(authorization.command),
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!botResponse.ok) {
       console.error(`SausiMusic rejeitou o comando com status ${botResponse.status}.`);
       response.status(502).json({ error: 'O SausiMusic não conseguiu processar o comando.' });
       return;
     }
-    const botResult = (await botResponse.json()) as { message?: unknown };
+    const botResult = (await botResponse.json()) as { message?: unknown; nowPlaying?: unknown };
     if (typeof botResult.message !== 'string') {
       response.status(502).json({ error: 'O SausiMusic retornou uma resposta inválida.' });
       return;
     }
-    response.json({ message: botResult.message });
+    response.json(botResult);
   } catch (error) {
     console.error('Falha ao repassar comando para o SausiMusic:', error);
     response.status(503).json({ error: 'O SausiMusic está indisponível.' });

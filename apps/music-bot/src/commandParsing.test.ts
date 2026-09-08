@@ -26,6 +26,8 @@ describe('parseMusicCommand', () => {
     ['!np', 'nowplaying'],
     ['/clear', 'clear'],
     ['!clear', 'clear'],
+    ['/history', 'history'],
+    ['!history', 'history'],
   ] as const) {
     it(`normaliza ${input}`, () => {
       const parsed = parseMusicCommand(input);
@@ -52,12 +54,25 @@ describe('parseMusicCommand', () => {
     }
   });
 
-  it('rejeita argumentos extras, /play externo e texto comum', () => {
+  it('aceita /play com busca e URL', () => {
+    assert.deepEqual(parseMusicCommand('/play Numb Linkin Park')?.args, { input: 'Numb Linkin Park' });
+    assert.deepEqual(parseMusicCommand('!play https://youtu.be/kXYiU_JCYtU')?.args, { input: 'https://youtu.be/kXYiU_JCYtU' });
+    assert.equal(isMusicCommandInput('/play Numb Linkin Park'), true);
+    assert.equal(parseMusicCommand('/play'), null);
+  });
+
+  it('aceita /playlist com URL e exige argumento', () => {
+    assert.deepEqual(parseMusicCommand('/playlist https://www.youtube.com/playlist?list=PL123')?.args, {
+      input: 'https://www.youtube.com/playlist?list=PL123',
+    });
+    assert.equal(isMusicCommandInput('/playlist https://www.youtube.com/playlist?list=PL123'), true);
+    assert.equal(parseMusicCommand('/playlist'), null);
+  });
+
+  it('rejeita argumentos extras e texto comum', () => {
     assert.equal(parseMusicCommand('/pause abc'), null);
     assert.equal(isMusicCommandInput('/pause abc'), true);
     assert.equal(parseMusicCommand('/play-file arquivo.mp3'), null);
-    assert.equal(parseMusicCommand('/play youtube'), null);
-    assert.equal(isMusicCommandInput('/play youtube'), false);
     assert.equal(parseMusicCommand('play-file'), null);
   });
 });

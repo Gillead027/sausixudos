@@ -3,6 +3,7 @@ import type {
   AuthenticatedUserIdentity,
   MusicBotCommandRequest,
   MusicCommandResponse,
+  MusicNowPlayingCard,
 } from '@sausixudos/shared';
 import type {
   MusicLog,
@@ -15,6 +16,7 @@ import {
   ensureDiagnosticAudioFile,
 } from './ffmpegAudioSource.js';
 import { TEST_AUDIO_DURATION_MS } from './programmaticAudioSource.js';
+import type { MusicProviderRegistry, ResolvedMusicTrack } from './musicProvider.js';
 
 export type MusicSessionState =
   | 'IDLE'
@@ -35,6 +37,7 @@ interface MusicTrackBase {
 export type MusicTrack = MusicTrackBase & (
   | { source: 'PROGRAMMATIC_TEST_TONE' }
   | { source: 'LOCAL_FFMPEG_FILE'; filePath: string }
+  | { source: 'EXTERNAL_PROVIDER'; providerTrack: ResolvedMusicTrack }
 );
 
 interface MusicSessionOptions {
@@ -43,6 +46,7 @@ interface MusicSessionOptions {
   botParticipant: MusicVoiceParticipant;
   log: MusicLog;
   onDestroyed: () => void;
+  providers: MusicProviderRegistry;
 }
 
 function formatTime(milliseconds: number): string {
@@ -52,8 +56,8 @@ function formatTime(milliseconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-function reply(message: string): MusicCommandResponse {
-  return { message };
+function reply(message: string, nowPlaying?: MusicNowPlayingCard): MusicCommandResponse {
+  return nowPlaying ? { message, nowPlaying } : { message };
 }
 
 export class MusicSession {
@@ -67,6 +71,7 @@ export class MusicSession {
   volume = 100;
 
   private readonly upcomingTracks: MusicTrack[] = [];
+  private readonly playedHistory: MusicTrack[] = [];
   private commandLock: Promise<void> = Promise.resolve();
   private playbackGeneration = 0;
   private playback: MusicPlaybackHandle | null = null;
@@ -94,6 +99,12 @@ export class MusicSession {
           return this.playFileCommand(request.requestedBy);
         case 'play-local':
           return this.playLocalCommand(request.requestedBy);
+        case 'play':
+          return this.playCommand(request.args.input, request.requestedBy);
+        case 'playlist':
+          return this.playlistCommand(request.args.input, request.requestedBy);
+        case 'history':
+          return this.historyCommand();
         case 'pause':
           return this.pauseCommand();
         case 'resume':
@@ -180,6 +191,61 @@ export class MusicSession {
     return this.enqueueOrStart(this.createLocalTrack(requester));
   }
 
+  private async playCommand(input: string, requester: AuthenticatedUserIdentity): Promise<MusicCommandResponse> {
+    this.options.log('search requested', { room: this.roomName, session: this.id, inputLength: input.length });
+    try {
+      const resolved = await this.options.providers.resolveInput(input);
+      const track = this.externalTrack(resolved, requester);
+      this.options.log('provider resolved', { room: this.roomName, session: this.id, provider: resolved.providerId, track: resolved.sourceId });
+      return this.enqueueOrStart(track);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.options.log('provider resolve failed', { room: this.roomName, session: this.id, error: message });
+      return reply(`Não consegui encontrar ou resolver essa música: ${message}`);
+    }
+  }
+
+  private externalTrack(resolved: ResolvedMusicTrack, requester: AuthenticatedUserIdentity): MusicTrack {
+    return {
+      id: randomUUID(),
+      title: resolved.title,
+      source: 'EXTERNAL_PROVIDER',
+      providerTrack: resolved,
+      durationMs: resolved.durationMs,
+      requestedBy: { ...requester },
+      createdAt: Date.now(),
+    };
+  }
+
+  private async playlistCommand(input: string, requester: AuthenticatedUserIdentity): Promise<MusicCommandResponse> {
+    try {
+      const resolvedTracks = await this.options.providers.resolvePlaylistInput(input);
+      const tracks = resolvedTracks.map((resolved) => this.externalTrack(resolved, requester));
+      if (tracks.length === 0) return reply('A playlist não possui faixas reproduzíveis.');
+      if (this.currentTrack) {
+        this.upcomingTracks.push(...tracks);
+        return reply(`Playlist adicionada à fila: ${tracks.length} faixa(s).`);
+      }
+      const first = tracks.shift()!;
+      this.upcomingTracks.push(...tracks);
+      const started = await this.startTrack(first);
+      if (!started) {
+        this.upcomingTracks.length = 0;
+        return reply(`Não foi possível iniciar a playlist por ${first.title}.`);
+      }
+      return reply(`Playlist iniciada com ${resolvedTracks.length} faixa(s). Tocando: ${first.title}.`, this.nowPlayingCard());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return reply(`Não consegui carregar essa playlist: ${message}`);
+    }
+  }
+
+  private historyCommand(): MusicCommandResponse {
+    if (this.playedHistory.length === 0) return reply('O histórico de reprodução está vazio.');
+    const items = this.playedHistory.slice(-10).reverse();
+    return reply(`Histórico: ${items.map((track, index) => `${index + 1}. ${track.title}`).join('; ')}.`, this.nowPlayingCard());
+  }
+
   private async enqueueOrStart(track: MusicTrack): Promise<MusicCommandResponse> {
     if (this.currentTrack) {
       this.upcomingTracks.push(track);
@@ -194,7 +260,7 @@ export class MusicSession {
 
     const started = await this.startTrack(track);
     return started
-      ? reply(`SausiMusic começou a tocar ${track.title}.`)
+      ? reply(`SausiMusic começou a tocar ${track.title}.`, this.nowPlayingCard())
       : reply(`Não foi possível tocar ${track.title}.`);
   }
 
@@ -211,10 +277,19 @@ export class MusicSession {
         onFinished: () => void this.finishPlayback(generation),
         onError: (error: Error) => void this.failPlayback(generation, error),
       };
-      this.playback = track.source === 'LOCAL_FFMPEG_FILE'
-        ? await this.botParticipant.startLocalFileAudio(track.filePath, this.volume, callbacks)
-        : await this.botParticipant.startTestAudio(this.volume, callbacks);
+      if (track.source === 'LOCAL_FFMPEG_FILE') {
+        this.playback = await this.botParticipant.startLocalFileAudio(track.filePath, this.volume, callbacks);
+      } else if (track.source === 'EXTERNAL_PROVIDER') {
+        this.options.log('resolving playable source', { room: this.roomName, session: this.id, provider: track.providerTrack.providerId, track: track.providerTrack.sourceId });
+        const playable = await this.options.providers.resolvePlayable(track.providerTrack);
+        this.playback = await this.botParticipant.startExternalAudio(playable, this.volume, callbacks);
+        this.options.log('external playback started', { room: this.roomName, session: this.id, provider: playable.providerId, track: track.providerTrack.sourceId });
+      } else {
+        this.playback = await this.botParticipant.startTestAudio(this.volume, callbacks);
+      }
       this.state = 'PLAYING';
+      this.playedHistory.push(track);
+      if (this.playedHistory.length > 20) this.playedHistory.splice(0, this.playedHistory.length - 20);
       this.options.log('playback started', {
         room: this.roomName,
         channel: this.channelId,
@@ -284,6 +359,36 @@ export class MusicSession {
       remaining: this.upcomingTracks.length,
     });
     return (await this.startTrack(next)) ? next : null;
+  }
+
+  private nowPlayingCard(): MusicNowPlayingCard | undefined {
+    const track = this.currentTrack;
+    if (!track) return undefined;
+    if (track.source === 'EXTERNAL_PROVIDER') {
+      const card: MusicNowPlayingCard = {
+        title: track.title,
+        author: track.providerTrack.author,
+        providerId: track.providerTrack.providerId,
+        durationMs: track.durationMs,
+        positionMs: this.positionMs,
+        requestedBy: track.requestedBy.displayName,
+        state: this.state,
+        volume: this.volume,
+      };
+      if (track.providerTrack.thumbnailUrl) card.thumbnailUrl = track.providerTrack.thumbnailUrl;
+      if (track.providerTrack.webUrl) card.webUrl = track.providerTrack.webUrl;
+      return card;
+    }
+    return {
+      title: track.title,
+      author: 'SausiMusic',
+      providerId: track.source === 'LOCAL_FFMPEG_FILE' ? 'local' : 'diagnostic',
+      durationMs: track.durationMs,
+      positionMs: this.positionMs,
+      requestedBy: track.requestedBy.displayName,
+      state: this.state,
+      volume: this.volume,
+    };
   }
 
   private pauseCommand(): MusicCommandResponse {
@@ -400,7 +505,7 @@ export class MusicSession {
     const queued = this.upcomingTracks.length > 0
       ? `Fila: ${this.upcomingTracks.map((track, index) => `${index + 1}. ${track.title}`).join('; ')}.`
       : 'Fila vazia.';
-    return reply(`${now} ${queued}`);
+    return reply(`${now} ${queued}`, this.nowPlayingCard());
   }
 
   private nowPlayingCommand(): MusicCommandResponse {
@@ -409,6 +514,7 @@ export class MusicSession {
       `Tocando agora: ${this.currentTrack.title}. Solicitado por: ${this.currentTrack.requestedBy.displayName}. ` +
       `Estado: ${this.state}. Posição: ${formatTime(this.positionMs)} / ${formatTime(this.currentTrack.durationMs)}. ` +
       `Volume: ${this.volume}%.`,
+      this.nowPlayingCard(),
     );
   }
 }
@@ -429,6 +535,8 @@ export class MusicSessionManager {
   constructor(
     private readonly createParticipant: MusicVoiceParticipantFactory,
     private readonly log: MusicLog,
+    private readonly providers: MusicProviderRegistry,
+    private readonly djUserIds: ReadonlySet<string> = new Set<string>(),
   ) {}
 
   get activeSessions(): number {
@@ -440,6 +548,10 @@ export class MusicSessionManager {
   }
 
   async execute(request: MusicBotCommandRequest): Promise<MusicCommandResponse> {
+    const djCommands = new Set<MusicBotCommandRequest['command']>(['pause', 'resume', 'skip', 'stop', 'leave', 'volume', 'clear']);
+    if (this.djUserIds.size > 0 && djCommands.has(request.command) && !this.djUserIds.has(request.requestedBy.id)) {
+      return reply('Este comando é restrito aos DJs configurados do SausiMusic.');
+    }
     this.log('command received', {
       room: request.channelId,
       channel: request.channelId,
@@ -447,7 +559,7 @@ export class MusicSessionManager {
       user: request.requestedBy.id,
     });
     let session = this.sessions.get(request.channelId);
-    if (!session && request.command !== 'play-file' && request.command !== 'play-local') {
+    if (!session && request.command !== 'play-file' && request.command !== 'play-local' && request.command !== 'play' && request.command !== 'playlist') {
       return this.noSessionResponse(request.command);
     }
 
@@ -464,6 +576,7 @@ export class MusicSessionManager {
         onDestroyed: () => {
           if (this.sessions.get(request.channelId) === session) this.sessions.delete(request.channelId);
         },
+        providers: this.providers,
       });
       this.sessions.set(request.channelId, session);
     }
@@ -474,8 +587,9 @@ export class MusicSessionManager {
   private noSessionResponse(command: MusicBotCommandRequest['command']): MusicCommandResponse {
     if (command === 'queue') return reply('Nada tocando no momento. Fila vazia.');
     if (command === 'nowplaying') return reply('Nada tocando no momento.');
+    if (command === 'history') return reply('O histórico de reprodução está vazio.');
     if (command === 'leave') return reply('SausiMusic não está neste canal.');
-    return reply('Não há uma sessão musical ativa neste canal. Use /play-file ou /play-local primeiro.');
+    return reply('Não há uma sessão musical ativa neste canal. Use /play <música> primeiro.');
   }
 
   async cleanup(channelId: string, reason: string): Promise<void> {

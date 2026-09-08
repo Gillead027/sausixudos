@@ -975,6 +975,7 @@ export function useVoiceRoom() {
             senderName: MUSIC_BOT_DISPLAY_NAME,
             text: result.response.message,
             sentAt: Date.now(),
+            ...(result.response.nowPlaying ? { musicCard: result.response.nowPlaying } : {}),
           };
           setMessages((current) => [...current.slice(-99), feedback]);
         }
