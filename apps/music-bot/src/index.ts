@@ -172,7 +172,7 @@ function applyVolume(frame: Int16Array, channelId: string): Int16Array {
   const gain = volume / 100;
   const scaled = new Int16Array(frame.length);
   for (let index = 0; index < frame.length; index += 1) {
-    const sample = Math.round(frame[index] * gain);
+    const sample = Math.round((frame[index] ?? 0) * gain);
     scaled[index] = Math.max(-32768, Math.min(32767, sample));
   }
   return scaled;
