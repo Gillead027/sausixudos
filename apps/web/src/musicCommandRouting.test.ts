@@ -61,6 +61,26 @@ describe('roteamento do composer de canal de texto', () => {
     assert.deepEqual(calls, ['music:!stop']);
   });
 
+  it('encaminha comando conhecido com argumentos inválidos para a validação da API', async () => {
+    const calls: string[] = [];
+    await assert.rejects(
+      routeTextChannelInput({
+        text: '/volume abc',
+        voiceChannelId: 'geral',
+        sendMusicCommand: async (_channelId, text) => {
+          calls.push(`music:${text}`);
+          throw new Error('Comando musical ou canal inválido.');
+        },
+        sendTextMessage: async (text) => {
+          calls.push(`text:${text}`);
+          return text;
+        },
+      }),
+      /Comando musical ou canal inválido/,
+    );
+    assert.deepEqual(calls, ['music:/volume abc']);
+  });
+
   it('explica que comandos exigem um canal de voz, sem usar o canal de texto', async () => {
     await assert.rejects(
       routeTextChannelInput({

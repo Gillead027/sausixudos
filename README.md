@@ -8,6 +8,7 @@ MVP privado e self-hosted para voz, compartilhamento de tela e chat entre pequen
 Chrome / Edge
   |-- HTTPS /             -> Caddy -> web:80
   |-- HTTPS /api/*        -> Caddy -> api:3000
+  |                               `-> music-bot:4100 (rede interna)
   |-- WSS /livekit/*      -> Caddy -> livekit:7880
   `-- WebRTC              -> VPS:7882/UDP (preferencial)
                               VPS:7881/TCP (fallback)
@@ -25,11 +26,40 @@ O Caddy preserva `/api/*` para o Express. Em `/livekit/*`, `handle_path` remove 
 
 ## Segurança do deploy
 
-- `LIVEKIT_API_KEY` e `LIVEKIT_API_SECRET` são fornecidos somente aos containers `api` e `livekit`.
+- `LIVEKIT_API_KEY` e `LIVEKIT_API_SECRET` são fornecidos somente aos containers `api`, `music-bot` e `livekit`.
 - O frontend recebe da API apenas a URL pública do LiveKit e um token de participante curto, limitado à sala.
 - A sessão usa cookie `HttpOnly`, `Secure`, `SameSite=Strict`, host-only e `Path=/`.
 - Frontend e API usam o mesmo domínio. O CORS aceita somente `https://APP_DOMAIN`.
 - O convite não é armazenado pelo frontend.
+
+## SausiMusic
+
+O SausiMusic vive em `apps/music-bot`, como um processo Node e um container
+separados do cliente Electron. Ele não possui autenticação, cadastro de usuários,
+servidores ou canais próprios. O fluxo de comando é:
+
+```text
+web/desktop -> API (sessão + canal + voice state) -> music-bot -> sala LiveKit
+```
+
+A API é a fronteira autenticada: resolve o usuário da sessão, valida o canal
+compartilhado e confirma no LiveKit que ele está conectado à sala. Somente então
+encaminha ao bot a identidade canônica do solicitante. Mensagens e áudio retornam
+pelo mesmo data channel/WebRTC usado pelo restante do Sausixudos.
+
+Os contratos, identidades, tópico do canal de dados e parser de canais ficam em
+`packages/shared`; o bot reutiliza esses artefatos e o protocolo LiveKit existente.
+O endpoint HTTP do bot fica apenas na rede interna do Compose e possui `/health`
+para monitoramento.
+
+O player mantém uma sessão independente por room, com faixa atual, fila FIFO,
+auto-next, posição e volume server-side. `/play-file` enfileira fixtures
+determinísticos de seis segundos; também existem `pause`, `resume`, `skip`,
+`stop`, `leave`, `volume 0-100`, `queue`, `nowplaying`/`np` e `clear`, sempre
+com prefixo `/` ou `!`. Não há download externo ou player de áudio no cliente.
+A auditoria detalhada do pipeline está em `docs/MUSIC_BOT_AUDIT.md`.
+O roteiro de validação audível com dois clientes está em
+`docs/MUSIC_BOT_E2E.md`.
 
 ## Verificações locais do código
 
@@ -37,6 +67,7 @@ O Caddy preserva `/api/*` para o Express. Em `/livekit/*`, `handle_path` remove 
 npm install
 npm run build
 npm run typecheck
+npm test
 ```
 
 ## Cliente Windows

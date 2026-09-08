@@ -1,5 +1,6 @@
 import { config as loadEnv } from 'dotenv';
 import { z } from 'zod';
+import { parseVoiceChannels } from '@sausixudos/shared';
 
 loadEnv({ path: new URL('../../../.env', import.meta.url), quiet: true });
 
@@ -20,11 +21,7 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-function parseChannelIds(value: string): string[] {
-  return value.split(',').map((entry) => entry.split(':')[0]?.trim() ?? '').filter(Boolean);
-}
-
 export const config = {
   ...parsed.data,
-  channelIds: parseChannelIds(parsed.data.VOICE_CHANNELS),
+  channels: parseVoiceChannels(parsed.data.VOICE_CHANNELS),
 };

@@ -12,3 +12,6 @@ apps/api/data/
 .claude/
 secrets/
 .tmp/
+docker-compose.override.yml
+/infra/livekit.local.yaml
+/livekit.yaml
