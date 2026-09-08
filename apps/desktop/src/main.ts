@@ -12,8 +12,29 @@ import {
 } from 'electron';
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { startActivityMonitor } from './activity.js';
 import { initAutoUpdater } from './updater.js';
+
+// windows-media-sessions calcula o caminho do próprio backend nativo relativo
+// a onde o módulo foi carregado — no build empacotado, isso caiu certo
+// (dentro de app.asar.unpacked, resolvido via require() real desde que
+// marcamos o pacote como external no tsup), mas ainda assim o handshake
+// inicial deu timeout num teste real. O próprio pacote documenta essa
+// variável de ambiente como escape hatch exatamente pra esse cenário — usamos
+// process.resourcesPath (API confiável do Electron pra achar a pasta de
+// recursos do app empacotado) em vez de depender da autodetecção da lib.
+// Precisa ser setada ANTES do módulo ser importado, por isso o import de
+// activity.js vira dinâmico lá embaixo em vez de estático aqui no topo.
+if (app.isPackaged) {
+  process.env.WINDOWS_MEDIA_SESSIONS_BACKEND = path.join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    'windows-media-sessions',
+    'bin',
+    'win-x64',
+    'windows-media-sessions-backend.exe',
+  );
+}
 
 const debugLogPath = path.join(process.env.TEMP || process.env.TMP || '.', 'sausixudos-startup-debug.log');
 
@@ -515,7 +536,7 @@ if (hasSingleInstanceLock) {
     mainWindow.focus();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     debugLog('whenReady resolved');
     try {
       const appUrl = readConfiguredUrl();
@@ -533,6 +554,7 @@ if (hasSingleInstanceLock) {
       mainWindow.once('closed', () => {
         mainWindow = null;
       });
+      const { startActivityMonitor } = await import('./activity.js');
       stopActivityMonitor = startActivityMonitor((activity) => {
         if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
           mainWindow.webContents.send('activity:changed', activity);

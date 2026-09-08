@@ -6,6 +6,12 @@ export default defineConfig([
       main: 'src/main.ts',
       preload: 'src/preload.ts',
       'picker-preload': 'src/picker-preload.ts',
+      // Entrada própria (não só um import de main.ts) de propósito: main.ts
+      // precisa setar WINDOWS_MEDIA_SESSIONS_BACKEND antes desse módulo
+      // carregar, e isso só é possível com um import() dinâmico apontando
+      // pra um arquivo dist/ real — que só existe se isto for uma entrada
+      // separada do bundler, em vez de ficar inline dentro do main.js.
+      activity: 'src/activity.ts',
     },
     format: ['cjs'],
     platform: 'node',

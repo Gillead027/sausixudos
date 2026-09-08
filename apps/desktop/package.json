@@ -1,6 +1,6 @@
 {
   "name": "@sausixudos/desktop",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Cliente Windows do Sausixudos",
   "main": "dist/main.js",
@@ -29,7 +29,8 @@
     "productName": "Sausixudos",
     "asar": true,
     "asarUnpack": [
-      "node_modules/windows-media-sessions/**/*"
+      "node_modules/windows-media-sessions/**/*",
+      "node_modules/ps-list/**/*"
     ],
     "npmRebuild": false,
     "directories": {
