@@ -537,7 +537,7 @@ if (hasSingleInstanceLock) {
         if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
           mainWindow.webContents.send('activity:changed', activity);
         }
-      });
+      }, debugLog);
       debugLog('startActivityMonitor done');
       initAutoUpdater();
       debugLog('initAutoUpdater done');
