@@ -200,14 +200,16 @@ function ChannelUserAvatar({
   name,
   ownIdentity,
   ownAvatarUrl,
+  speaking,
 }: {
   identity: string;
   name: string;
   ownIdentity: string;
   ownAvatarUrl: string;
+  speaking: boolean;
 }) {
   const avatarUrl = useAvatarByIdentity(identity, identity === ownIdentity, ownAvatarUrl);
-  return <Avatar name={name} avatarUrl={avatarUrl} compact />;
+  return <Avatar name={name} avatarUrl={avatarUrl} speaking={speaking} compact />;
 }
 
 function participantAccentColor(
@@ -298,6 +300,7 @@ function ChannelButton({
   ownIdentity,
   ownAvatarUrl,
   onOpenProfile,
+  speakingIds,
 }: {
   channel: VoiceChannel;
   summary: RoomSummary | undefined;
@@ -309,6 +312,10 @@ function ChannelButton({
   ownIdentity: string;
   ownAvatarUrl: string;
   onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
+  // Só existe atividade de fala em tempo real pro canal em que você está
+  // conectado agora — o LiveKit não entrega "quem está falando" de salas que
+  // você não entrou. Por isso este set só chega preenchido quando `active`.
+  speakingIds: Set<string>;
 }) {
   return (
     <div className="channel-block">
@@ -359,6 +366,7 @@ function ChannelButton({
               name={participant.name}
               ownIdentity={ownIdentity}
               ownAvatarUrl={ownAvatarUrl}
+              speaking={active && speakingIds.has(participant.identity)}
             />
             <span className="channel-user-name">{participant.name}</span>
             {isBot && <span className="bot-badge">BOT</span>}
@@ -372,7 +380,6 @@ function ChannelButton({
 
 function ParticipantRow({
   participant,
-  speaking,
   volume,
   setVolume,
   accentColor,
@@ -380,7 +387,6 @@ function ParticipantRow({
   onOpenProfile,
 }: {
   participant: LocalParticipant | RemoteParticipant;
-  speaking: boolean;
   volume: number;
   setVolume: (value: number) => void;
   accentColor?: AccentColor | undefined;
@@ -397,7 +403,7 @@ function ParticipantRow({
   const isSharingScreen = Boolean(participant.getTrackPublication(Track.Source.ScreenShare));
 
   return (
-    <div className={`participant-row ${speaking ? 'active-speaker' : ''}`}>
+    <div className="participant-row">
       <button
         type="button"
         className="participant-main"
@@ -405,14 +411,14 @@ function ParticipantRow({
         onClick={(event) => onOpenProfile(participant.identity, event)}
         title={isBot ? undefined : `Ver perfil de ${name}`}
       >
-        <Avatar name={name} accentColor={accentColor} avatarUrl={avatarUrl} speaking={speaking} compact />
+        <Avatar name={name} accentColor={accentColor} avatarUrl={avatarUrl} compact />
         <div className="participant-copy">
           <strong>
             {name}{local ? ' (você)' : ''}
             {isBot && <span className="bot-badge">BOT</span>}
             {isSharingScreen && <span className="live-badge" title="Compartilhando a tela">AO VIVO</span>}
           </strong>
-          <span>{speaking ? (isBot ? 'Tocando' : 'Falando') : isBot ? 'Ocioso' : muted ? 'Microfone desligado' : 'Conectado'}</span>
+          <span>{isBot ? 'Ocioso' : muted ? 'Microfone desligado' : 'Conectado'}</span>
         </div>
         {muted && <MicOffIcon className="participant-muted" size={14} />}
       </button>
@@ -1647,7 +1653,6 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
       <ParticipantRow
         key={participant.identity}
         participant={participant}
-        speaking={voice.speakers.has(participant.identity)}
         volume={volumes[participant.identity] ?? 100}
         setVolume={(value) => setVolumes((current) => ({ ...current, [participant.identity]: value }))}
         accentColor={participantAccentColor(participant, session.accentColor)}
@@ -1812,6 +1817,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
               ownIdentity={session.id}
               ownAvatarUrl={session.avatarUrl}
               onOpenProfile={openUserProfile}
+              speakingIds={voice.speakers}
             />
           ))}
         </nav>
@@ -2136,10 +2142,10 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                 <small>{voice.participants.length}</small>
               </div>
               <div className="member-list-scroll">
-                {/* Lista única e com ordem estável — quem fala só ganha um destaque
-                    visual (borda/fundo verde em .active-speaker), não muda de
-                    posição. Alternar de grupo (Falando/Conectado) a cada fala
-                    fazia a lista inteira pular pra cima e pra baixo. */}
+                {/* Painel só de contagem/roster: sem nenhuma reação visual a
+                    quem está falando agora (isso mora no indicador ao lado
+                    do nome, na lista de canais de voz à esquerda) — aqui é
+                    só nome + acesso ao perfil, numa ordem sempre estável. */}
                 <div className="member-group">
                   <span className="member-group-title">Conectado — {typedParticipants.length}</span>
                   {typedParticipants.map(renderParticipantRow)}
