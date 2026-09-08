@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { MusicProviderRegistry } from './musicProvider.js';
 import { YouTubeProvider } from './youtubeProvider.js';
+import { SoundCloudProvider } from './soundcloudProvider.js';
 
 const searchMeta = {
   id: 'abc123',
@@ -68,3 +69,56 @@ describe('MusicProviderRegistry + YouTubeProvider', () => {
     await assert.rejects(registry.resolveInput('https://example.com/audio'), /Nenhum provider suporta/);
   });
 });
+
+describe('fallback resiliente YouTube -> SoundCloud', () => {
+  it('usa SoundCloud quando a busca do YouTube é bloqueada', async () => {
+    const blockedClient = {
+      metadata: async () => { throw new Error('Sign in to confirm you’re not a bot'); },
+      playlistMetadata: async () => [],
+    };
+    const soundcloudClient = {
+      metadata: async () => ({
+        id: 'sc123', title: 'Numb', uploader: 'LINKIN PARK', duration: 30,
+        webpage_url: 'https://soundcloud.com/linkinpark/numb', thumbnail: undefined,
+      }),
+      playlistMetadata: async () => [],
+    };
+    const youtube = new YouTubeProvider(blockedClient);
+    const soundcloud = new SoundCloudProvider(soundcloudClient);
+    const registry = new MusicProviderRegistry([youtube, soundcloud], 'youtube', ['youtube', 'soundcloud']);
+
+    const track = await registry.resolveInput('Numb Linkin Park');
+    assert.equal(track.providerId, 'soundcloud');
+    assert.equal(track.title, 'Numb');
+  });
+
+  it('resolve URL do YouTube por oEmbed e usa SoundCloud como áudio de fallback', async () => {
+    const blockedClient = {
+      metadata: async () => { throw new Error('youtube bloqueado'); },
+      playlistMetadata: async () => [],
+    };
+    const soundcloudClient = {
+      metadata: async () => ({
+        id: 'sc456', title: 'Numb', uploader: 'LINKIN PARK', duration: 30,
+        webpage_url: 'https://soundcloud.com/linkinpark/numb', thumbnail: undefined,
+      }),
+      playlistMetadata: async () => [],
+    };
+    const soundcloud = new SoundCloudProvider(soundcloudClient);
+    const fakeFetch = async () => new Response(JSON.stringify({
+      title: 'Numb (Official Music Video)',
+      author_name: 'Linkin Park',
+      thumbnail_url: 'https://i.ytimg.com/vi/kXYiU_JCYtU/hqdefault.jpg',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const youtube = new YouTubeProvider(blockedClient, soundcloud, true, fakeFetch as typeof fetch);
+    const registry = new MusicProviderRegistry([youtube, soundcloud], 'youtube', ['youtube', 'soundcloud']);
+
+    const track = await registry.resolveInput('https://www.youtube.com/watch?v=kXYiU_JCYtU');
+    assert.equal(track.providerId, 'youtube');
+    assert.match(track.title, /Numb/i);
+    const playable = await registry.resolvePlayable(track);
+    assert.equal(playable.providerId, 'soundcloud');
+    assert.equal(playable.input, 'https://soundcloud.com/linkinpark/numb');
+  });
+});
+

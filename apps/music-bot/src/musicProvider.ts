@@ -29,10 +29,14 @@ export class MusicProviderRegistry {
   constructor(
     providers: readonly MusicProvider[],
     private readonly defaultProviderId: string,
+    private readonly searchProviderIds: readonly string[] = [defaultProviderId],
   ) {
     for (const provider of providers) this.byId.set(provider.id, provider);
     if (!this.byId.has(defaultProviderId)) {
       throw new Error(`Provider padrão não registrado: ${defaultProviderId}`);
+    }
+    for (const providerId of searchProviderIds) {
+      if (!this.byId.has(providerId)) throw new Error(`Provider de busca não registrado: ${providerId}`);
     }
   }
   async resolveInput(input: string): Promise<ResolvedMusicTrack> {
@@ -49,11 +53,19 @@ export class MusicProviderRegistry {
       return provider.resolveUrl(parsedUrl);
     }
 
-    const provider = this.byId.get(this.defaultProviderId);
-    if (!provider) throw new Error('Provider padrão indisponível.');
-    const [first] = await provider.search(input);
-    if (!first) throw new Error('Nenhum resultado encontrado.');
-    return first;
+    let lastError: unknown = null;
+    for (const providerId of this.searchProviderIds) {
+      const provider = this.byId.get(providerId);
+      if (!provider) continue;
+      try {
+        const [first] = await provider.search(input);
+        if (first) return first;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    const suffix = lastError instanceof Error ? `: ${lastError.message}` : '';
+    throw new Error(`Nenhum resultado encontrado${suffix}`);
   }
 
   async resolvePlayable(track: ResolvedMusicTrack): Promise<PlayableMusicSource> {

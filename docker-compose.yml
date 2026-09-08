@@ -75,6 +75,7 @@ services:
       LIVEKIT_INTERNAL_URL: http://livekit:7880
       YTDLP_PLUGIN_DIR: /app/.tools/yt-dlp-plugins
       YTDLP_POT_BASE_URL: http://pot-provider:4416
+      YOUTUBE_AUDIO_FALLBACK: "true"
       MUSIC_DJ_USER_IDS: "${MUSIC_DJ_USER_IDS:-}"
       VOICE_CHANNELS: "${VOICE_CHANNELS:-geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida}"
     restart: unless-stopped

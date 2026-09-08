@@ -15,6 +15,7 @@ const envSchema = z.object({
   YTDLP_PATH: z.string().min(1).default('yt-dlp'),
   YTDLP_PLUGIN_DIR: z.string().min(1).default(defaultYtDlpPluginDir),
   YTDLP_POT_BASE_URL: z.string().url().default('http://127.0.0.1:4416'),
+  YOUTUBE_AUDIO_FALLBACK: z.enum(['true', 'false']).default('false'),
   MUSIC_DJ_USER_IDS: z.string().default(''),
   VOICE_CHANNELS: z.string().default(
     'geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida',

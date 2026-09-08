@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import { MusicProviderRegistry } from '../src/musicProvider.js';
 import { SpotifyProvider } from '../src/spotifyProvider.js';
+import { SoundCloudProvider } from '../src/soundcloudProvider.js';
 import { YouTubeProvider } from '../src/youtubeProvider.js';
 import { YtDlpClient } from '../src/ytDlpClient.js';
 import { YtDlpAudioSource } from '../src/ytDlpAudioSource.js';
 import { config } from '../src/config.js';
 
 const client = new YtDlpClient(config.YTDLP_PATH);
-const youtube = new YouTubeProvider(client);
-const spotify = new SpotifyProvider(youtube);
-const providers = new MusicProviderRegistry([youtube, spotify], 'youtube');
+const soundcloud = new SoundCloudProvider(client);
+const youtube = new YouTubeProvider(client, soundcloud, true);
+const spotify = new SpotifyProvider(soundcloud);
+const providers = new MusicProviderRegistry([youtube, soundcloud, spotify], 'youtube', ['youtube', 'soundcloud']);
 
 const playlistUrl = 'https://music.youtube.com/playlist?list=PLIJZpctd9XrPWdjWPcUv_kU2PVoHz_DvD';
 const playlist = await providers.resolvePlaylistInput(playlistUrl);
