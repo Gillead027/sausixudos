@@ -115,15 +115,35 @@ export class YtDlpClient {
     return entries.flatMap((entry): YtDlpMetadata[] => {
       if (!entry || typeof entry !== 'object') return [];
       const data = entry as Record<string, unknown>;
-      if (typeof data.id !== 'string' || typeof data.title !== 'string') return [];
+      if (typeof data.id !== 'string') return [];
       const webpage = typeof data.webpage_url === 'string'
         ? data.webpage_url
-        : `https://www.youtube.com/watch?v=${data.id}`;
-      return [{ id: data.id, title: data.title,
-        uploader: typeof data.uploader === 'string' ? data.uploader : undefined,
+        : typeof data.url === 'string'
+          ? data.url
+          : '';
+      if (!webpage) return [];
+      let title = typeof data.title === 'string' ? data.title.trim() : '';
+      if (!title) {
+        try {
+          const slug = new URL(webpage).pathname.split('/').filter(Boolean).pop() ?? '';
+          title = decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
+        } catch {
+          title = '';
+        }
+      }
+      if (!title) title = data.id;
+      return [{
+        id: data.id,
+        title,
+        uploader: typeof data.uploader === 'string'
+          ? data.uploader
+          : typeof data.album_artist === 'string'
+            ? data.album_artist
+            : undefined,
         duration: typeof data.duration === 'number' ? data.duration : undefined,
         webpage_url: webpage,
-        thumbnail: typeof data.thumbnail === 'string' ? data.thumbnail : undefined }];
+        thumbnail: typeof data.thumbnail === 'string' ? data.thumbnail : undefined,
+      }];
     });
   }
 
