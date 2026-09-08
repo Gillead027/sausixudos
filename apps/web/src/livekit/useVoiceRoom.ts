@@ -648,10 +648,6 @@ export function useVoiceRoom() {
         setTimeout(() => {
           suppressPresenceSoundsRef.current = false;
         }, 1_500);
-        // Este é o som de VOCÊ entrando — RoomEvent.ParticipantConnected (que
-        // toca playJoinSound lá em cima) só dispara pros outros participantes,
-        // o LiveKit não avisa a própria conexão por ali.
-        playJoinSound(getOutputVolume());
         setCurrentChannel(channel);
         try {
           await room.localParticipant.setMicrophoneEnabled(
@@ -666,6 +662,12 @@ export function useVoiceRoom() {
           setError(`${await describeMediaError(mediaError, 'microphone')} Você entrou com o microfone desligado.`);
         }
         syncRoom();
+        // Toca só agora, depois do mic já publicado (ou já ter desistido dele)
+        // — é o mesmo ponto em que a tela de "Entrando na sala..." some, então
+        // o som acompanha o momento real em que você está dentro, em vez de
+        // disparar cedo enquanto a UI ainda mostra carregando. Isso também
+        // cobre troca de canal, que passa por aqui de novo.
+        playJoinSound(getOutputVolume());
       } catch (connectError) {
         await room.disconnect();
         setCurrentChannel(null);
@@ -680,8 +682,11 @@ export function useVoiceRoom() {
   );
 
   const disconnect = useCallback(async () => {
-    if (currentChannel) playLeaveSound(getOutputVolume());
+    const wasConnected = Boolean(currentChannel);
     await room.disconnect();
+    // Só depois de desconectar de verdade — soar isso antes fazia o áudio
+    // "confirmar a saída" enquanto você ainda estava tecnicamente na sala.
+    if (wasConnected) playLeaveSound(getOutputVolume());
     setCurrentChannel(null);
     setParticipants([]);
     setMessages([]);
