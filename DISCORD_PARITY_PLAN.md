@@ -2,7 +2,7 @@
 
 Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord — app privado, self-hosted, para um grupo fechado de amigos. Atualizar conforme cada item avança. Categorias: `DONE`, `PARTIAL`, `MISSING`, `BLOCKED`, `OPTIONAL`, `PREMIUM`, `EXPERIMENTAL`.
 
-Última análise completa do código: 2026-09-09. Atualizado em 2026-09-09 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8).
+Última análise completa do código: 2026-09-09. Atualizado em 2026-09-09 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8).
 
 ## 0. Arquitetura atual (para não recriar o que já existe)
 
@@ -136,7 +136,7 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Notificações (sistema/push) | `MISSING` |
 | Busca de mensagens | `MISSING` |
 | Inbox/caixa de entrada | `MISSING` |
-| Reações | `MISSING` |
+| Reações | `DONE` — paleta curada de 8 emojis unicode (sem picker completo de busca/categorias ainda), tempo real via WebSocket, `apps/api/src/reactions.ts`. Super Reaction animada (Premium) continua `MISSING`. |
 | Threads | `MISSING` |
 | Enquetes | `MISSING` |
 | Edição/exclusão de mensagem | `DONE` — só o próprio autor (sem cargos ainda pra moderação de terceiros); `PATCH`/`DELETE /api/text-channels/:id/messages/:id`, indicador "(editado)", tempo real via WebSocket. |
@@ -219,7 +219,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 11. Soundboard — `MISSING`
 12. Roles/permissões — `MISSING`
 13. Administração — `MISSING`
-14. Chat completo — `PARTIAL` (texto em tempo real, markdown e edição/exclusão já funcionam; reações/threads/pins/reply/busca/emoji ainda ausentes)
+14. Chat completo — `PARTIAL` (texto em tempo real, markdown, edição/exclusão e reações já funcionam; threads/pins/reply/busca/emoji picker completo ainda ausentes)
 
 ---
 
@@ -228,7 +228,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 Dado que grande parte do pedido depende da fundação de dados (§1) que não existe, e que o próprio usuário pediu para não trabalhar em tudo simultaneamente, os candidatos a "próximo passo" são:
 
 - **A) Fundação de dados + WebSocket real** — maior alavancagem, mas é trabalho de infraestrutura invisível (sem novidade visual imediata). Necessário antes de roles/permissões/DMs/reações em tempo real/moderação/auditoria.
-- **B) Chat completo no servidor único atual** — markdown e edição/exclusão **já feitos** (ver §8). Falta: reações, pins, reply, busca, upload de arquivo. Uploads exigem decidir armazenamento (MinIO na própria VPS é a opção mais compatível com a infra atual).
+- **B) Chat completo no servidor único atual** — markdown, edição/exclusão e reações **já feitos** (ver §8). Falta: pins, reply, busca, upload de arquivo. Uploads exigem decidir armazenamento (MinIO na própria VPS é a opção mais compatível com a infra atual).
 - **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — depende parcialmente de (A), mas pode ser feito de forma reduzida (cargos globais, sem hierarquia complexa) sem esperar multi-servidor.
 - **D) Soundboard** — item da lista de prioridade especial, tecnicamente isolado (usa a mesma infra de áudio do LiveKit que já existe), não depende de (A).
 
