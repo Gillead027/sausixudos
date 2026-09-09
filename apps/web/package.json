@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "test": "node --import tsx --test src/musicCommandRouting.test.ts"
+    "test": "node --import tsx --test src/musicCommandRouting.test.ts src/components/Markdown.test.tsx"
   },
   "dependencies": {
     "@livekit/krisp-noise-filter": "^0.4.4",

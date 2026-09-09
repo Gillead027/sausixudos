@@ -92,6 +92,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+  editTextMessage: (channelId: string, messageId: string, text: string) =>
+    request<{ message: TextMessage }>(
+      `/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`,
+      { method: 'PATCH', body: JSON.stringify({ text }) },
+    ),
+  deleteTextMessage: (channelId: string, messageId: string) =>
+    request<void>(`/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+    }),
   getLiveKitToken: (roomId: string) =>
     request<LiveKitTokenResponse>('/api/livekit/token', {
       method: 'POST',

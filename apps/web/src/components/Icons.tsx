@@ -105,3 +105,19 @@ export function MusicNoteIcon(props: IconProps) {
 export function GameControllerIcon(props: IconProps) {
   return <Icon {...props}><rect x="2.5" y="7.5" width="19" height="10" rx="5" /><path d="M7 10.5v4M5 12.5h4" /><circle cx="16" cy="10.5" r="1" fill="currentColor" /><circle cx="18.5" cy="13" r="1" fill="currentColor" /></Icon>;
 }
+
+export function EditIcon(props: IconProps) {
+  return <Icon {...props}><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></Icon>;
+}
+
+export function TrashIcon(props: IconProps) {
+  return <Icon {...props}><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /><path d="M10 11v6M14 11v6" /></Icon>;
+}
+
+export function CopyIcon(props: IconProps) {
+  return <Icon {...props}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></Icon>;
+}
+
+export function CheckIcon(props: IconProps) {
+  return <Icon {...props}><path d="M4 12.5 9.5 18 20 6" /></Icon>;
+}

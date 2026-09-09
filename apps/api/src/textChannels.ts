@@ -25,6 +25,7 @@ interface TextMessageRow {
   sender_name: string;
   text: string;
   created_at: number;
+  edited_at: number | null;
 }
 
 interface TextBotMessageRow {
@@ -56,13 +57,31 @@ const listMessagesStatement = db.prepare(`
     messages.sender_id,
     users.username AS sender_name,
     messages.text,
-    messages.created_at
+    messages.created_at,
+    messages.edited_at
   FROM text_messages AS messages
   INNER JOIN users ON users.id = messages.sender_id
   WHERE messages.channel_id = ?
   ORDER BY messages.created_at DESC
   LIMIT ?
 `);
+const selectMessageByIdStatement = db.prepare(`
+  SELECT
+    messages.id,
+    messages.channel_id,
+    messages.sender_id,
+    users.username AS sender_name,
+    messages.text,
+    messages.created_at,
+    messages.edited_at
+  FROM text_messages AS messages
+  INNER JOIN users ON users.id = messages.sender_id
+  WHERE messages.id = ? AND messages.channel_id = ?
+`);
+const updateMessageStatement = db.prepare(
+  'UPDATE text_messages SET text = ?, edited_at = ? WHERE id = ? AND sender_id = ?',
+);
+const deleteMessageStatement = db.prepare('DELETE FROM text_messages WHERE id = ? AND sender_id = ?');
 
 const listBotMessagesStatement = db.prepare(`
   SELECT id, channel_id, sender_name, text, music_card_json, created_at
@@ -106,6 +125,7 @@ function toMessage(row: TextMessageRow): TextMessage {
     senderType: 'HUMAN',
     text: row.text,
     sentAt: row.created_at,
+    ...(row.edited_at !== null ? { editedAt: row.edited_at } : {}),
   };
 }
 
@@ -204,6 +224,46 @@ export function createTextMessage(
   return message;
 }
 
+
+export function getTextMessageById(channelId: string, messageId: string): TextMessage | undefined {
+  const row = selectMessageByIdStatement.get(messageId, channelId) as unknown as TextMessageRow | undefined;
+  return row && toMessage(row);
+}
+
+export type EditTextMessageResult =
+  | { ok: true; message: TextMessage }
+  | { ok: false; reason: 'NOT_FOUND' | 'FORBIDDEN' };
+
+// Sem sistema de cargos ainda (ver DISCORD_PARITY_PLAN.md) — só o próprio
+// autor pode editar/apagar, mesmo nível de moderação que o resto do app
+// hoje (nenhum).
+export function editTextMessage(
+  channelId: string,
+  messageId: string,
+  text: string,
+  editorId: string,
+): EditTextMessageResult {
+  const existing = getTextMessageById(channelId, messageId);
+  if (!existing) return { ok: false, reason: 'NOT_FOUND' };
+  if (existing.senderId !== editorId) return { ok: false, reason: 'FORBIDDEN' };
+  const editedAt = Date.now();
+  updateMessageStatement.run(text, editedAt, messageId, editorId);
+  return { ok: true, message: { ...existing, text, editedAt } };
+}
+
+export type DeleteTextMessageResult = { ok: true } | { ok: false; reason: 'NOT_FOUND' | 'FORBIDDEN' };
+
+export function deleteTextMessage(
+  channelId: string,
+  messageId: string,
+  requesterId: string,
+): DeleteTextMessageResult {
+  const existing = getTextMessageById(channelId, messageId);
+  if (!existing) return { ok: false, reason: 'NOT_FOUND' };
+  if (existing.senderId !== requesterId) return { ok: false, reason: 'FORBIDDEN' };
+  deleteMessageStatement.run(messageId, requesterId);
+  return { ok: true };
+}
 
 export function getMusicBotTextMessage(channelId: string): TextMessage | undefined {
   const rows = listBotMessagesStatement.all(channelId, 1) as unknown as TextBotMessageRow[];

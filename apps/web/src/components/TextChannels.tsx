@@ -11,8 +11,9 @@ import {
 import { api } from '../api';
 import { routeTextChannelInput } from '../musicCommandRouting';
 import { onRealtimeConnect, onRealtimeEvent } from '../realtime';
+import { MarkdownText } from './Markdown';
 import { MusicCard } from './MusicCard';
-import { CloseIcon, MessageIcon, SearchIcon, VoiceIcon } from './Icons';
+import { CloseIcon, CopyIcon, EditIcon, MessageIcon, SearchIcon, TrashIcon, VoiceIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 
@@ -71,10 +72,69 @@ function BotTextMessageRow({
         {message.musicCard ? (
           <MusicCard card={message.musicCard} onCommand={onMusicCommand} />
         ) : (
-          <p>{message.text}</p>
+          <p><MarkdownText text={message.text} /></p>
         )}
       </div>
     </article>
+  );
+}
+
+// Textarea de edição inline — Enter salva, Shift+Enter quebra linha, Escape
+// cancela, mesmo padrão de atalho do compositor principal de mensagem.
+function MessageEditForm({
+  initialText,
+  onSave,
+  onCancel,
+}: {
+  initialText: string;
+  onSave: (text: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState(initialText);
+  const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }, []);
+
+  async function save() {
+    const trimmed = text.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    try {
+      await onSave(trimmed);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="message-edit-form">
+      <textarea
+        ref={textareaRef}
+        rows={1}
+        maxLength={CHAT_MESSAGE_MAX_LENGTH}
+        value={text}
+        disabled={saving}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            void save();
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            onCancel();
+          }
+        }}
+      />
+      <div className="message-edit-hint">
+        escape para cancelar · enter para salvar
+      </div>
+    </div>
   );
 }
 
@@ -83,14 +143,25 @@ function HumanTextMessageRow({
   continued,
   session,
   onOpenProfile,
+  isEditing,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onDelete,
 }: {
   message: TextMessage;
   continued: boolean;
   session: UserSession;
   onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
+  isEditing: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (text: string) => Promise<void>;
+  onDelete: () => void;
 }) {
   const avatarUrl = useTextAvatar(message.senderId, session);
   const initial = message.senderName.trim().charAt(0).toUpperCase() || '?';
+  const isOwn = message.senderId === session.id;
   return (
     <article className={`message text-message ${continued ? 'continued' : ''}`}>
       <button
@@ -116,9 +187,31 @@ function HumanTextMessageRow({
               minute: '2-digit',
             })}
           </time>
+          {message.editedAt && <span className="message-edited-mark" title="Mensagem editada">(editado)</span>}
         </header>
-        <p>{message.text}</p>
+        {isEditing ? (
+          <MessageEditForm initialText={message.text} onSave={onSaveEdit} onCancel={onCancelEdit} />
+        ) : (
+          <p><MarkdownText text={message.text} /></p>
+        )}
       </div>
+      {!isEditing && (
+        <div className="message-hover-actions" role="toolbar" aria-label="Ações da mensagem">
+          <button type="button" title="Copiar texto" aria-label="Copiar texto" onClick={() => void navigator.clipboard.writeText(message.text)}>
+            <CopyIcon size={14} />
+          </button>
+          {isOwn && (
+            <>
+              <button type="button" title="Editar mensagem" aria-label="Editar mensagem" onClick={onStartEdit}>
+                <EditIcon size={14} />
+              </button>
+              <button type="button" title="Apagar mensagem" aria-label="Apagar mensagem" onClick={onDelete}>
+                <TrashIcon size={14} />
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </article>
   );
 }
@@ -129,10 +222,27 @@ function TextMessageRow(props: {
   session: UserSession;
   onOpenProfile: (userId: string, event: { currentTarget: HTMLElement }) => void;
   onMusicCommand: (command: string) => Promise<MusicCommandResponse>;
+  isEditing: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (text: string) => Promise<void>;
+  onDelete: () => void;
 }) {
   return props.message.senderType === 'BOT'
     ? <BotTextMessageRow message={props.message} onMusicCommand={props.onMusicCommand} />
-    : <HumanTextMessageRow message={props.message} continued={props.continued} session={props.session} onOpenProfile={props.onOpenProfile} />;
+    : (
+      <HumanTextMessageRow
+        message={props.message}
+        continued={props.continued}
+        session={props.session}
+        onOpenProfile={props.onOpenProfile}
+        isEditing={props.isEditing}
+        onStartEdit={props.onStartEdit}
+        onCancelEdit={props.onCancelEdit}
+        onSaveEdit={props.onSaveEdit}
+        onDelete={props.onDelete}
+      />
+    );
 }
 
 export function TextChannelView({
@@ -154,8 +264,29 @@ export function TextChannelView({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState<MusicCommandResponse | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  async function saveMessageEdit(messageId: string, text: string) {
+    try {
+      const { message } = await api.editTextMessage(channel.id, messageId, text);
+      setMessages((current) => applyIncomingMessage(current, message));
+      setEditingMessageId(null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível editar a mensagem.');
+    }
+  }
+
+  async function deleteMessage(messageId: string) {
+    if (!window.confirm('Apagar esta mensagem? Essa ação não pode ser desfeita.')) return;
+    try {
+      await api.deleteTextMessage(channel.id, messageId);
+      setMessages((current) => current.filter(({ id }) => id !== messageId));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível apagar a mensagem.');
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -165,6 +296,7 @@ export function TextChannelView({
     setLoading(true);
     setError('');
     setFeedback(null);
+    setEditingMessageId(null);
 
     const refresh = async () => {
       if (requestRunning) return;
@@ -283,6 +415,11 @@ export function TextChannelView({
               continued={continued}
               session={session}
               onOpenProfile={onOpenProfile}
+              isEditing={editingMessageId === message.id}
+              onStartEdit={() => setEditingMessageId(message.id)}
+              onCancelEdit={() => setEditingMessageId(null)}
+              onSaveEdit={(text) => saveMessageEdit(message.id, text)}
+              onDelete={() => void deleteMessage(message.id)}
               onMusicCommand={async (commandText) => {
                 if (!voiceChannelId) {
                   throw new Error('Você precisa estar em um canal de voz para usar os controles do SausiMusic.');

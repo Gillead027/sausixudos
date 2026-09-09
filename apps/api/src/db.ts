@@ -76,19 +76,27 @@ db.prepare(
    VALUES ('geral', 'geral', 'Conversa geral da comunidade', NULL, ?)`,
 ).run(Date.now());
 
-const existingColumns = new Set(
-  (db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((column) => column.name),
-);
-for (const [column, definition] of [
+function ensureColumns(table: string, columns: readonly (readonly [string, string])[]): void {
+  const existing = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((column) => column.name),
+  );
+  for (const [column, definition] of columns) {
+    if (!existing.has(column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+}
+
+ensureColumns('users', [
   ['bio', "TEXT NOT NULL DEFAULT ''"],
   ['pronouns', "TEXT NOT NULL DEFAULT ''"],
   ['avatar_data_url', "TEXT NOT NULL DEFAULT ''"],
   ['banner_data_url', "TEXT NOT NULL DEFAULT ''"],
-] as const) {
-  if (!existingColumns.has(column)) {
-    db.exec(`ALTER TABLE users ADD COLUMN ${column} ${definition}`);
-  }
-}
+]);
+
+ensureColumns('text_messages', [
+  ['edited_at', 'INTEGER'],
+]);
 
 // Canais de voz eram só o env var VOICE_CHANNELS, parseado no boot (ver
 // config.ts) — agora viram linhas reais, mas sem perder o que já estava

@@ -381,6 +381,7 @@ export interface TextMessage {
   senderType: ParticipantType;
   text: string;
   sentAt: number;
+  editedAt?: number;
   musicCard?: MusicNowPlayingCard;
 }
 

@@ -41,6 +41,8 @@ import { createUser, getUserById, getUserByUsername, updateUserProfile, verifyPa
 import {
   deleteMusicBotTextMessage,
   deleteMusicBotTextMessagesForVoiceChannel,
+  deleteTextMessage,
+  editTextMessage,
   upsertMusicBotTextMessage,
   createTextChannel,
   createTextMessage,
@@ -426,6 +428,58 @@ app.post(
     response.status(201).json({ message });
   },
 );
+
+app.patch(
+  '/api/text-channels/:channelId/messages/:messageId',
+  requireSession,
+  textMessageLimiter,
+  (request, response) => {
+    const channelId = request.params.channelId;
+    const messageId = request.params.messageId;
+    const body = textMessageSchema.safeParse(request.body);
+    if (typeof channelId !== 'string' || typeof messageId !== 'string' || !getTextChannelById(channelId)) {
+      response.status(404).json({ error: 'Canal de texto não encontrado.' });
+      return;
+    }
+    if (!body.success) {
+      response.status(400).json({ error: 'A mensagem deve ter entre 1 e 500 caracteres.' });
+      return;
+    }
+
+    const result = editTextMessage(channelId, messageId, body.data.text, currentUser(response).id);
+    if (!result.ok) {
+      if (result.reason === 'FORBIDDEN') {
+        response.status(403).json({ error: 'Você só pode editar suas próprias mensagens.' });
+      } else {
+        response.status(404).json({ error: 'Mensagem não encontrada.' });
+      }
+      return;
+    }
+    broadcast({ type: 'TEXT_MESSAGE_UPSERT', channelId, message: result.message });
+    response.json({ message: result.message });
+  },
+);
+
+app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, (request, response) => {
+  const channelId = request.params.channelId;
+  const messageId = request.params.messageId;
+  if (typeof channelId !== 'string' || typeof messageId !== 'string' || !getTextChannelById(channelId)) {
+    response.status(404).json({ error: 'Canal de texto não encontrado.' });
+    return;
+  }
+
+  const result = deleteTextMessage(channelId, messageId, currentUser(response).id);
+  if (!result.ok) {
+    if (result.reason === 'FORBIDDEN') {
+      response.status(403).json({ error: 'Você só pode apagar suas próprias mensagens.' });
+    } else {
+      response.status(404).json({ error: 'Mensagem não encontrada.' });
+    }
+    return;
+  }
+  broadcast({ type: 'TEXT_MESSAGE_DELETE', channelId, messageId });
+  response.status(204).end();
+});
 
 // Compartilhada entre GET /api/rooms (fetch inicial/reconexão) e o webhook
 // do LiveKit abaixo (que dispara ROOM_STATE_UPDATE via WebSocket sempre que
