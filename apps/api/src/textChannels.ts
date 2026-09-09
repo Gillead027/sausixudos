@@ -7,6 +7,7 @@ import {
   type TextMessage,
 } from '@sausixudos/shared';
 import { db } from './db.js';
+import { slugify } from './slug.js';
 import type { UserRecord } from './users.js';
 
 interface TextChannelRow {
@@ -130,16 +131,7 @@ function toBotMessage(row: TextBotMessageRow): TextMessage {
 }
 
 function channelSlug(name: string): string {
-  const base = name
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 24) || 'canal';
-  return selectChannelByIdStatement.get(base)
-    ? `${base}-${randomUUID().slice(0, 6)}`
-    : base;
+  return slugify(name, (id) => Boolean(selectChannelByIdStatement.get(id)));
 }
 
 export function listTextChannels(): TextChannel[] {
@@ -224,33 +216,45 @@ export function deleteMusicBotTextMessage(channelId: string): boolean {
   return result.changes > 0;
 }
 
+// Retorna os ids dos canais de texto cujo card foi removido (normalmente no
+// máximo um, já que upsertMusicBotTextMessage mantém só um card ativo por
+// canal de voz — mas o caller precisa saber quais canais avisar via
+// WebSocket, então devolvemos a lista real em vez de só uma contagem).
 export function deleteMusicBotTextMessagesForVoiceChannel(
   voiceChannelId: string,
   exceptTextChannelId?: string,
-): number {
+): string[] {
   const rows = listAllBotMessagesStatement.all() as unknown as TextBotMessageRow[];
-  let removed = 0;
+  const clearedChannelIds: string[] = [];
   for (const row of rows) {
     if (row.channel_id === exceptTextChannelId || !row.music_card_json) continue;
     try {
       const card = JSON.parse(row.music_card_json) as MusicNowPlayingCard;
       if (card.voiceChannelId !== voiceChannelId) continue;
-      removed += Number(deleteBotMessageByIdStatement.run(row.id).changes);
+      if (deleteBotMessageByIdStatement.run(row.id).changes) clearedChannelIds.push(row.channel_id);
     } catch {
       // Mensagem antiga/corrompida não deve impedir a limpeza das demais.
     }
   }
-  return removed;
+  return clearedChannelIds;
+}
+
+// Todo canal de texto que tem um card de "tocando agora" ativo agora —
+// usado pelo laço de resync periódico em index.ts (ver ali) que mantém o
+// progresso do card atualizado via WebSocket sem o cliente precisar pollar.
+export function listActiveMusicBotChannelIds(): string[] {
+  const rows = listAllBotMessagesStatement.all() as unknown as TextBotMessageRow[];
+  return rows.filter((row) => row.music_card_json).map((row) => row.channel_id);
 }
 
 export function upsertMusicBotTextMessage(
   channelId: string,
   text: string,
   musicCard: MusicNowPlayingCard,
-): TextMessage {
-  if (musicCard.voiceChannelId) {
-    deleteMusicBotTextMessagesForVoiceChannel(musicCard.voiceChannelId, channelId);
-  }
+): { message: TextMessage; clearedChannelIds: string[] } {
+  const clearedChannelIds = musicCard.voiceChannelId
+    ? deleteMusicBotTextMessagesForVoiceChannel(musicCard.voiceChannelId, channelId)
+    : [];
   const existing = getMusicBotTextMessage(channelId);
   const message: TextMessage = {
     id: `music-bot:${channelId}`,
@@ -270,5 +274,5 @@ export function upsertMusicBotTextMessage(
     JSON.stringify(musicCard),
     message.sentAt,
   );
-  return message;
+  return { message, clearedChannelIds };
 }

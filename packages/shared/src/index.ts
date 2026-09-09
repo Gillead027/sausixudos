@@ -383,3 +383,16 @@ export interface TextMessage {
   sentAt: number;
   musicCard?: MusicNowPlayingCard;
 }
+
+// Eventos empurrados pelo WebSocket da API (ver apps/api/src/realtime.ts) —
+// substituem os antigos loops de polling de mensagens/salas/canais no
+// cliente web. Uma única união discriminada mantém servidor e cliente no
+// mesmo contrato sem precisar de um gerador de esquema à parte.
+export type RealtimeEvent =
+  | { type: 'TEXT_MESSAGE_CREATE'; channelId: string; message: TextMessage }
+  | { type: 'TEXT_MESSAGE_UPSERT'; channelId: string; message: TextMessage }
+  | { type: 'TEXT_MESSAGE_DELETE'; channelId: string; messageId: string }
+  | { type: 'TEXT_CHANNEL_CREATE'; channel: TextChannel }
+  | { type: 'VOICE_CHANNEL_CREATE'; channel: VoiceChannel }
+  | { type: 'VOICE_CHANNEL_DELETE'; channelId: string }
+  | { type: 'ROOM_STATE_UPDATE'; room: RoomSummary };

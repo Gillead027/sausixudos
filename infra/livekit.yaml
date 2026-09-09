@@ -1,3 +1,9 @@
+# NÃO usado diretamente pelo container — mantido só como referência legível.
+# O compose passa a config de verdade via env var LIVEKIT_CONFIG (ver
+# docker-compose.yml, serviço livekit), porque webhook.api_key precisa da
+# substituição ${LIVEKIT_API_KEY} do próprio compose, que não acontece dentro
+# de um arquivo montado como volume. Se algum dia isso voltar a ser um
+# arquivo estático de verdade, o conteúdo é este:
 port: 7880
 bind_addresses:
   - "0.0.0.0"
@@ -14,3 +20,9 @@ room:
   auto_create: true
   empty_timeout: 300
   departure_timeout: 20
+
+# Substitui o polling de /api/rooms que existia no cliente web.
+webhook:
+  api_key: "SEU_LIVEKIT_API_KEY_AQUI"
+  urls:
+    - http://api:3000/api/livekit/webhook

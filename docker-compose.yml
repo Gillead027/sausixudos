@@ -77,7 +77,6 @@ services:
       YTDLP_POT_BASE_URL: http://pot-provider:4416
       YOUTUBE_AUDIO_FALLBACK: "true"
       MUSIC_DJ_USER_IDS: "${MUSIC_DJ_USER_IDS:-}"
-      VOICE_CHANNELS: "${VOICE_CHANNELS:-geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida}"
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" ]
@@ -99,14 +98,34 @@ services:
 
   livekit:
     image: livekit/livekit-server:v1.13.5
-    volumes:
-      - ./infra/livekit.yaml:/etc/livekit.yaml:ro
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?Defina LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET:?Defina LIVEKIT_API_SECRET}"
+      # webhook.api_key não pode ficar num arquivo estático versionado (não dá
+      # pra fazer ${LIVEKIT_API_KEY} ser substituído dentro de um YAML montado
+      # como volume) — LIVEKIT_CONFIG é o jeito suportado pelo próprio
+      # binário (--config-body) de passar a config inteira via env var, onde
+      # a substituição do compose funciona normalmente. Ver infra/livekit.yaml
+      # pra reaproveitar o restante da config caso isso precise virar arquivo de novo.
+      LIVEKIT_CONFIG: |
+        port: 7880
+        bind_addresses:
+          - "0.0.0.0"
+        log_level: info
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          use_external_ip: true
+        room:
+          auto_create: true
+          empty_timeout: 300
+          departure_timeout: 20
+        webhook:
+          api_key: "${LIVEKIT_API_KEY:?Defina LIVEKIT_API_KEY}"
+          urls:
+            - http://api:3000/api/livekit/webhook
     ports:
       - '0.0.0.0:7881:7881/tcp'
       - '0.0.0.0:7882:7882/udp'
-    command: [ "--config", "/etc/livekit.yaml" ]
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "wget -S -O /dev/null http://127.0.0.1:7880/ 2>&1 | grep -q 'HTTP/'" ]

@@ -1,9 +1,11 @@
-import { type FormEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type ReactNode, type RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   ACCENT_COLORS,
   MUSIC_BOT_IDENTITY,
   parseParticipantMetadata,
+  TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
+  TEXT_CHANNEL_NAME_MAX_LENGTH,
   type AccentColor,
   type Activity,
   type PublicConfig,
@@ -64,6 +66,7 @@ import {
   VoiceIcon,
 } from './Icons';
 import { ActivityLine } from './ActivityDisplay';
+import { connectRealtime, onRealtimeConnect, onRealtimeEvent } from '../realtime';
 import { ProfilePopover, type ProfilePopoverTarget } from './ProfilePopover';
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
@@ -293,6 +296,109 @@ function IconSwap({ on, onIcon, offIcon }: { on: boolean; onIcon: ReactNode; off
       <span className={`icon-swap-layer ${on ? 'visible' : ''}`}>{onIcon}</span>
       <span className={`icon-swap-layer ${on ? '' : 'visible'}`}>{offIcon}</span>
     </span>
+  );
+}
+
+// Minimalista de propósito — nome + descrição, mesmo nível de simplicidade
+// que CreateTextChannelDialog tem hoje. Bitrate/permissões/região ficam pra
+// quando existir um sistema de permissões de verdade (ver DISCORD_PARITY_PLAN.md).
+function CreateVoiceChannelDialog({
+  open,
+  onClose,
+  onCreated,
+  returnFocusRef,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (channel: VoiceChannel) => void;
+  returnFocusRef: RefObject<HTMLButtonElement | null>;
+}) {
+  const titleId = useId();
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const close = useCallback(() => {
+    onClose();
+    window.requestAnimationFrame(() => returnFocusRef.current?.focus());
+  }, [onClose, returnFocusRef]);
+
+  useEffect(() => {
+    if (!open) return;
+    nameInputRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !saving) close();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [close, open, saving]);
+
+  if (!open) return null;
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const { channel } = await api.createVoiceChannel(name, description);
+      setName('');
+      setDescription('');
+      onCreated(channel);
+      close();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível criar o canal de voz.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-overlay" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !saving) close();
+    }}>
+      <form className="channel-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={submit}>
+        <header>
+          <div>
+            <h2 id={titleId}>Criar canal de voz</h2>
+            <p>Um novo espaço de conversa por voz no servidor.</p>
+          </div>
+          <button type="button" onClick={close} disabled={saving} aria-label="Fechar">
+            <CloseIcon size={18} />
+          </button>
+        </header>
+        <label htmlFor="voice-channel-name">Nome do canal</label>
+        <div className="channel-name-field">
+          <VoiceIcon size={14} />
+          <input
+            ref={nameInputRef}
+            id="voice-channel-name"
+            maxLength={TEXT_CHANNEL_NAME_MAX_LENGTH}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="canal-de-voz"
+            required
+          />
+        </div>
+        <label htmlFor="voice-channel-description">Descrição <span>(opcional)</span></label>
+        <input
+          id="voice-channel-description"
+          maxLength={TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH}
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder="Sobre o que é este canal?"
+        />
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <footer>
+          <button type="button" className="dialog-cancel" onClick={close} disabled={saving}>Cancelar</button>
+          <button type="submit" className="primary-button" disabled={saving || !name.trim()}>
+            {saving ? 'Criando…' : 'Criar canal'}
+          </button>
+        </footer>
+      </form>
+    </div>
   );
 }
 
@@ -1494,6 +1600,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [textChannels, setTextChannels] = useState<TextChannel[]>([]);
   const [selectedTextChannelId, setSelectedTextChannelId] = useState<string | null>(null);
   const [createTextChannelOpen, setCreateTextChannelOpen] = useState(false);
+  const [createVoiceChannelOpen, setCreateVoiceChannelOpen] = useState(false);
   const [perfMode, setPerfModeState] = useState<PerfMode>(() => getPerfMode());
   const [messageStyle, setMessageStyleState] = useState<MessageStyle>(() => loadMessageStyle());
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => getTheme());
@@ -1512,11 +1619,13 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [savingProfile, setSavingProfile] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const createTextChannelButtonRef = useRef<HTMLButtonElement>(null);
+  const createVoiceChannelButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const textChannelsInitializedRef = useRef(false);
 
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeCreateTextChannel = useCallback(() => setCreateTextChannelOpen(false), []);
+  const closeCreateVoiceChannel = useCallback(() => setCreateVoiceChannelOpen(false), []);
 
   function choosePerfMode(mode: PerfMode) {
     setPerfMode(mode);
@@ -1592,6 +1701,10 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   }
 
   useEffect(() => {
+    connectRealtime();
+  }, []);
+
+  useEffect(() => {
     let active = true;
     const refresh = () => {
       void api.getRooms().then((result) => {
@@ -1600,38 +1713,60 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         setLivekitAvailable(result.livekitAvailable);
       }).catch(() => active && setLivekitAvailable(false));
     };
+    // Fetch inicial só pra pintar a tela rápido; a partir daí o WebSocket
+    // empurra ROOM_STATE_UPDATE (via webhook do LiveKit) — sem poll.
     refresh();
-    const timer = window.setInterval(refresh, 4_000);
+    const unsubscribeConnect = onRealtimeConnect(refresh);
+    const unsubscribeEvent = onRealtimeEvent((event) => {
+      if (event.type === 'ROOM_STATE_UPDATE') {
+        setRooms((current) => current.map((room) => (room.id === event.room.id ? event.room : room)));
+      } else if (event.type === 'VOICE_CHANNEL_CREATE') {
+        setRooms((current) =>
+          current.some((room) => room.id === event.channel.id)
+            ? current
+            : [...current, { ...event.channel, participants: [] }],
+        );
+      } else if (event.type === 'VOICE_CHANNEL_DELETE') {
+        setRooms((current) => current.filter((room) => room.id !== event.channelId));
+      }
+    });
     return () => {
       active = false;
-      window.clearInterval(timer);
+      unsubscribeConnect();
+      unsubscribeEvent();
     };
   }, []);
 
   useEffect(() => {
     let active = true;
+    const applyChannels = (channels: TextChannel[]) => {
+      if (!active) return;
+      setTextChannels(channels);
+      if (!textChannelsInitializedRef.current) {
+        textChannelsInitializedRef.current = true;
+        setSelectedTextChannelId(channels[0]?.id ?? null);
+      } else {
+        setSelectedTextChannelId((current) => {
+          if (current && !channels.some(({ id }) => id === current)) return channels[0]?.id ?? null;
+          return current;
+        });
+      }
+    };
     const refresh = () => {
-      void api.getTextChannels().then(({ channels }) => {
-        if (!active) return;
-        setTextChannels(channels);
-        if (!textChannelsInitializedRef.current) {
-          textChannelsInitializedRef.current = true;
-          setSelectedTextChannelId(channels[0]?.id ?? null);
-        } else {
-          setSelectedTextChannelId((current) => {
-            if (current && !channels.some(({ id }) => id === current)) return channels[0]?.id ?? null;
-            return current;
-          });
-        }
-      }).catch(() => {
-        // Mantém a última lista disponível e tenta novamente no próximo intervalo.
+      void api.getTextChannels().then(({ channels }) => applyChannels(channels)).catch(() => {
+        // Mantém a última lista disponível; reconectar dispara um novo fetch.
       });
     };
     refresh();
-    const timer = window.setInterval(refresh, 10_000);
+    const unsubscribeConnect = onRealtimeConnect(refresh);
+    const unsubscribeEvent = onRealtimeEvent((event) => {
+      if (event.type !== 'TEXT_CHANNEL_CREATE') return;
+      setTextChannels((current) => (current.some(({ id }) => id === event.channel.id) ? current : [...current, event.channel]));
+    });
     return () => {
       active = false;
-      window.clearInterval(timer);
+      unsubscribeConnect();
+      unsubscribeEvent();
     };
   }, []);
 
@@ -1699,6 +1834,12 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   function handleTextChannelCreated(channel: TextChannel) {
     setTextChannels((current) => current.some(({ id }) => id === channel.id) ? current : [...current, channel]);
     setSelectedTextChannelId(channel.id);
+  }
+
+  function handleVoiceChannelCreated(channel: VoiceChannel) {
+    setRooms((current) =>
+      current.some((room) => room.id === channel.id) ? current : [...current, { ...channel, participants: [] }],
+    );
   }
 
   async function submitChat(event: FormEvent<HTMLFormElement>) {
@@ -1818,6 +1959,12 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         onCreated={handleTextChannelCreated}
         returnFocusRef={createTextChannelButtonRef}
       />
+      <CreateVoiceChannelDialog
+        open={createVoiceChannelOpen}
+        onClose={closeCreateVoiceChannel}
+        onCreated={handleVoiceChannelCreated}
+        returnFocusRef={createVoiceChannelButtonRef}
+      />
       <ServerSettings open={serverSettingsOpen} onClose={() => setServerSettingsOpen(false)} />
       {voice.connected && (
         <VoiceAudioSinks
@@ -1881,16 +2028,26 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           <div className="section-title">
             <span>CANAIS DE VOZ</span>
             <small>{rooms.reduce((sum, room) => sum + room.participants.length, 0)} online</small>
+            <button
+              ref={createVoiceChannelButtonRef}
+              type="button"
+              className="add-channel-button"
+              onClick={() => setCreateVoiceChannelOpen(true)}
+              aria-label="Criar canal de voz"
+              title="Criar canal de voz"
+            >
+              <PlusIcon size={14} />
+            </button>
           </div>
           {!livekitAvailable && <div className="service-warning">LiveKit indisponível</div>}
-          {config.channels.map((channel) => (
+          {rooms.map((room) => (
             <ChannelButton
-              key={channel.id}
-              channel={channel}
-              summary={rooms.find((room) => room.id === channel.id)}
-              active={voice.currentChannel?.id === channel.id && voice.connected}
-              loading={joiningId === channel.id}
-              onClick={() => void joinChannel(channel)}
+              key={room.id}
+              channel={room}
+              summary={room}
+              active={voice.currentChannel?.id === room.id && voice.connected}
+              loading={joiningId === room.id}
+              onClick={() => void joinChannel(room)}
               chatOpen={chatOpen}
               onToggleChat={() => setChatOpen((open) => !open)}
               ownIdentity={session.id}

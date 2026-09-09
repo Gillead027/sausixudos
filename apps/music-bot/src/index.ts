@@ -31,6 +31,13 @@ const providers = new MusicProviderRegistry([
 ], 'youtube', ['youtube', 'soundcloud']);
 const djUserIds = new Set(config.MUSIC_DJ_USER_IDS.split(',').map((id) => id.trim()).filter(Boolean));
 
+// Canais de voz agora são dados dinâmicos no banco da API (não mais um env
+// var fixo carregado no boot deste processo) — a API já valida channelId
+// contra o banco antes de chamar qualquer uma das rotas abaixo, então aqui
+// só resta validar o formato (mesma regra de parseVoiceChannels), não mais
+// pertencimento a uma lista estática que ficaria desatualizada.
+const VOICE_CHANNEL_ID_PATTERN = /^[a-z0-9-]{1,32}$/;
+
 const sessionManager = new MusicSessionManager(
   (context, lifecycle) =>
     new BotVoiceParticipant({
@@ -65,7 +72,7 @@ const server = createServer((request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/state') {
     const channelId = url.searchParams.get('channelId') ?? '';
-    if (!config.channels.some((channel) => channel.id === channelId)) {
+    if (!VOICE_CHANNEL_ID_PATTERN.test(channelId)) {
       response.writeHead(400).end();
       return;
     }
@@ -101,7 +108,7 @@ const server = createServer((request, response) => {
           const channelId = body && typeof body === 'object'
             ? (body as { channelId?: unknown }).channelId
             : undefined;
-          if (typeof channelId !== 'string' || !config.channels.some((channel) => channel.id === channelId)) {
+          if (typeof channelId !== 'string' || !VOICE_CHANNEL_ID_PATTERN.test(channelId)) {
             response.writeHead(400).end();
             return;
           }
@@ -111,10 +118,7 @@ const server = createServer((request, response) => {
           return;
         }
 
-        if (
-          !isMusicBotCommandRequest(body) ||
-          !config.channels.some((channel) => channel.id === body.channelId)
-        ) {
+        if (!isMusicBotCommandRequest(body) || !VOICE_CHANNEL_ID_PATTERN.test(body.channelId)) {
           response.writeHead(400).end();
           return;
         }

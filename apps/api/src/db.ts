@@ -49,6 +49,15 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_text_bot_messages_channel_created
     ON text_bot_messages(channel_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS voice_channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // O SausiMusic mantém um único player persistente por canal de texto. Limpa
@@ -79,4 +88,21 @@ for (const [column, definition] of [
   if (!existingColumns.has(column)) {
     db.exec(`ALTER TABLE users ADD COLUMN ${column} ${definition}`);
   }
+}
+
+// Canais de voz eram só o env var VOICE_CHANNELS, parseado no boot (ver
+// config.ts) — agora viram linhas reais, mas sem perder o que já estava
+// configurado em produção: só semeia se a tabela ainda estiver vazia (ou
+// seja, primeira vez que este código roda contra um banco existente).
+const voiceChannelCount = (
+  db.prepare('SELECT COUNT(*) AS count FROM voice_channels').get() as { count: number }
+).count;
+if (voiceChannelCount === 0) {
+  const insertVoiceChannel = db.prepare(
+    'INSERT INTO voice_channels (id, name, description, position, created_by, created_at) VALUES (?, ?, ?, ?, NULL, ?)',
+  );
+  const seededAt = Date.now();
+  config.channels.forEach((channel, index) => {
+    insertVoiceChannel.run(channel.id, channel.name, channel.description, index, seededAt);
+  });
 }

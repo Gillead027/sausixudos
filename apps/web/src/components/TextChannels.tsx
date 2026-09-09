@@ -10,10 +10,23 @@ import {
 } from '@sausixudos/shared';
 import { api } from '../api';
 import { routeTextChannelInput } from '../musicCommandRouting';
+import { onRealtimeConnect, onRealtimeEvent } from '../realtime';
 import { MusicCard } from './MusicCard';
 import { CloseIcon, MessageIcon, SearchIcon, VoiceIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
+
+// Único ponto de mescla de uma mensagem nova/atualizada no array local —
+// usado tanto pelo caminho otimista local (envio próprio) quanto pelos
+// eventos de WebSocket, pra não duplicar a invariante "no máximo um card do
+// bot por canal, substituído em vez de duplicado" em três lugares como
+// antes. Reordena por sentAt porque eventos de WebSocket não têm garantia
+// de ordem estrita entre reconexões.
+function applyIncomingMessage(current: TextMessage[], incoming: TextMessage): TextMessage[] {
+  const index = current.findIndex(({ id }) => id === incoming.id);
+  const next = index < 0 ? [...current, incoming] : current.map((message, position) => (position === index ? incoming : message));
+  return next.sort((left, right) => left.sentAt - right.sentAt);
+}
 
 const textAvatarCache = new Map<string, string>();
 
@@ -173,11 +186,27 @@ export function TextChannelView({
     };
 
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2_000);
+    // Sem poll: o WebSocket empurra criação/atualização/remoção em tempo
+    // real (ver assinatura abaixo). Ao reconectar depois de ficar offline,
+    // refaz esse fetch pra resincronizar qualquer coisa perdida no meio.
+    const unsubscribeReconnect = onRealtimeConnect(() => void refresh());
     return () => {
       active = false;
-      window.clearInterval(timer);
+      unsubscribeReconnect();
     };
+  }, [channel.id]);
+
+  useEffect(() => {
+    return onRealtimeEvent((event) => {
+      if (event.type === 'TEXT_MESSAGE_CREATE' || event.type === 'TEXT_MESSAGE_UPSERT') {
+        if (event.channelId !== channel.id) return;
+        setMessages((current) => applyIncomingMessage(current, event.message));
+        window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
+      } else if (event.type === 'TEXT_MESSAGE_DELETE') {
+        if (event.channelId !== channel.id) return;
+        setMessages((current) => current.filter(({ id }) => id !== event.messageId));
+      }
+    });
   }, [channel.id]);
 
   useEffect(() => {
@@ -201,17 +230,11 @@ export function TextChannelView({
       });
       if (result.kind === 'text-message') {
         const { message } = result;
-        setMessages((current) => current.some(({ id }) => id === message.id) ? current : [...current, message]);
+        setMessages((current) => applyIncomingMessage(current, message));
         window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
       } else if (result.response.textMessage) {
         const botMessage = result.response.textMessage;
-        setMessages((current) => {
-          const index = current.findIndex(({ id }) => id === botMessage.id);
-          if (index < 0) return [...current, botMessage];
-          const next = [...current];
-          next[index] = botMessage;
-          return next;
-        });
+        setMessages((current) => applyIncomingMessage(current, botMessage));
         window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
       } else if (result.response.removeTextMessage) {
         setMessages((current) => current.filter(({ senderType }) => senderType !== 'BOT'));
@@ -268,11 +291,7 @@ export function TextChannelView({
                 if (response.removeTextMessage) {
                   setMessages((current) => current.filter(({ senderType }) => senderType !== 'BOT'));
                 } else if (response.textMessage) {
-                  const botMessage = response.textMessage;
-                  setMessages((current) => {
-                    const withoutOldPlayer = current.filter(({ senderType }) => senderType !== 'BOT');
-                    return [...withoutOldPlayer, botMessage].sort((left, right) => left.sentAt - right.sentAt);
-                  });
+                  setMessages((current) => applyIncomingMessage(current, response.textMessage!));
                 }
                 return response;
               }}

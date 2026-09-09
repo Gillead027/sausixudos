@@ -7,6 +7,7 @@ import type {
   TextChannel,
   TextMessage,
   UserSession,
+  VoiceChannel,
 } from '@sausixudos/shared';
 
 interface ApiErrorBody {
@@ -77,6 +78,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name, description }),
     }),
+  createVoiceChannel: (name: string, description: string) =>
+    request<{ channel: VoiceChannel }>('/api/voice-channels', {
+      method: 'POST',
+      body: JSON.stringify({ name, description }),
+    }),
+  deleteVoiceChannel: (channelId: string) =>
+    request<void>(`/api/voice-channels/${encodeURIComponent(channelId)}`, { method: 'DELETE' }),
   getTextMessages: (channelId: string) =>
     request<{ messages: TextMessage[] }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages`),
   sendTextMessage: (channelId: string, text: string) =>

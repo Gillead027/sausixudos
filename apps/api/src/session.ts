@@ -22,8 +22,7 @@ function sign(encodedPayload: string): string {
   return createHmac('sha256', config.SESSION_SECRET).update(encodedPayload).digest('base64url');
 }
 
-function readCookies(request: Request): Record<string, string> {
-  const header = request.headers.cookie;
+function readCookies(header: string | undefined): Record<string, string> {
   if (!header) return {};
 
   return Object.fromEntries(
@@ -63,8 +62,12 @@ export function clearSessionCookie(response: Response): void {
   });
 }
 
-export function getSession(request: Request): SessionIdentity | null {
-  const raw = readCookies(request)[COOKIE_NAME];
+// Extraída de getSession() pra ser reaproveitada pelo handshake do
+// WebSocket (apps/api/src/realtime.ts), que recebe o upgrade HTTP antes de
+// qualquer middleware do Express rodar e por isso não tem acesso a um
+// objeto Request — só ao header bruto de cookie da requisição de upgrade.
+export function getSessionFromCookieHeader(cookieHeader: string | undefined): SessionIdentity | null {
+  const raw = readCookies(cookieHeader)[COOKIE_NAME];
   if (!raw) return null;
 
   const [encodedPayload, providedSignature] = raw.split('.');
@@ -95,6 +98,10 @@ export function getSession(request: Request): SessionIdentity | null {
   } catch {
     return null;
   }
+}
+
+export function getSession(request: Request): SessionIdentity | null {
+  return getSessionFromCookieHeader(request.headers.cookie);
 }
 
 export function inviteMatches(provided: string): boolean {

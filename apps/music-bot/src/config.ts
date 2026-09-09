@@ -1,7 +1,6 @@
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { parseVoiceChannels } from '@sausixudos/shared';
 
 loadEnv({ path: new URL('../../../.env', import.meta.url), quiet: true });
 const defaultYtDlpPluginDir = fileURLToPath(new URL('../../../.tools/yt-dlp-plugins/', import.meta.url));
@@ -17,9 +16,6 @@ const envSchema = z.object({
   YTDLP_POT_BASE_URL: z.string().url().default('http://127.0.0.1:4416'),
   YOUTUBE_AUDIO_FALLBACK: z.enum(['true', 'false']).default('false'),
   MUSIC_DJ_USER_IDS: z.string().default(''),
-  VOICE_CHANNELS: z.string().default(
-    'geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida',
-  ),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -29,7 +25,4 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const config = {
-  ...parsed.data,
-  channels: parseVoiceChannels(parsed.data.VOICE_CHANNELS),
-};
+export const config = parsed.data;

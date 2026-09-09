@@ -2,7 +2,7 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient, TrackSource, WebhookReceiver } from 'livekit-server-sdk';
 import { z } from 'zod';
 import {
   ACCENT_COLORS,
@@ -27,6 +27,7 @@ import {
   type PublicConfig,
   type RoomSummary,
   type UserSession,
+  type VoiceChannel,
 } from '@sausixudos/shared';
 import { config } from './config.js';
 import {
@@ -46,12 +47,21 @@ import {
   getMusicBotTextMessage,
   getTextChannelById,
   getTextChannelByName,
+  listActiveMusicBotChannelIds,
   listTextChannels,
   listTextMessages,
 } from './textChannels.js';
 import { authorizeMusicCommand } from './musicCommands.js';
 import { fetchMusicThumbnail } from './musicThumbnails.js';
 import { authorizeVoiceDisconnect } from './voiceModeration.js';
+import { attachRealtime, broadcast } from './realtime.js';
+import {
+  createVoiceChannel,
+  deleteVoiceChannel,
+  getVoiceChannelById,
+  getVoiceChannelByName,
+  listVoiceChannels,
+} from './voiceChannels.js';
 
 const app = express();
 const roomService = new RoomServiceClient(
@@ -88,7 +98,7 @@ const textMessageLimiter = rateLimit({
   message: { error: 'Você está enviando mensagens rápido demais.' },
 });
 
-const textChannelCreateLimiter = rateLimit({
+const channelCreateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   limit: 10,
   standardHeaders: 'draft-8',
@@ -146,7 +156,7 @@ const musicCommandSchema = z.object({
   textChannelId: z.string().min(1).max(32).optional(),
 });
 
-const textChannelSchema = z.object({
+const channelSchema = z.object({
   name: z
     .string()
     .trim()
@@ -179,6 +189,10 @@ function currentUser(response: Response): UserRecord {
   return response.locals.user as UserRecord;
 }
 
+// Chamada tanto na abertura de um canal (fetch inicial) quanto por um laço
+// periódico server-side (ver setInterval mais abaixo) — nos dois casos,
+// qualquer mudança real é empurrada via WebSocket, então o cliente nunca
+// mais precisa pollar isso diretamente.
 async function refreshMusicBotTextMessage(textChannelId: string): Promise<void> {
   const existing = getMusicBotTextMessage(textChannelId);
   const voiceChannelId = existing?.musicCard?.voiceChannelId;
@@ -191,16 +205,19 @@ async function refreshMusicBotTextMessage(textChannelId: string): Promise<void> 
     if (!stateResponse.ok) return;
     const state = (await stateResponse.json()) as { nowPlaying?: unknown };
     if (!state.nowPlaying || typeof state.nowPlaying !== 'object') {
-      deleteMusicBotTextMessage(textChannelId);
+      if (deleteMusicBotTextMessage(textChannelId)) {
+        broadcast({ type: 'TEXT_MESSAGE_DELETE', channelId: textChannelId, messageId: existing.id });
+      }
       return;
     }
     const nowPlaying: MusicNowPlayingCard = {
       ...(state.nowPlaying as MusicNowPlayingCard),
       voiceChannelId,
     };
-    upsertMusicBotTextMessage(textChannelId, existing.text, nowPlaying);
+    const { message } = upsertMusicBotTextMessage(textChannelId, existing.text, nowPlaying);
+    broadcast({ type: 'TEXT_MESSAGE_UPSERT', channelId: textChannelId, message });
   } catch {
-    // Worker reiniciando: preserva o último card e tenta de novo no próximo poll.
+    // Worker reiniciando: preserva o último card e tenta de novo no próximo ciclo.
   }
 }
 
@@ -329,7 +346,7 @@ app.get('/api/users/:id/profile', requireSession, (request, response) => {
 app.get('/api/config', requireSession, (_request, response) => {
   const payload: PublicConfig = {
     livekitUrl: config.LIVEKIT_PUBLIC_URL,
-    channels: config.channels,
+    channels: listVoiceChannels(),
   };
   response.json(payload);
 });
@@ -352,8 +369,8 @@ app.get('/api/text-channels', requireSession, (_request, response) => {
   response.json({ channels: listTextChannels() });
 });
 
-app.post('/api/text-channels', requireSession, textChannelCreateLimiter, (request, response) => {
-  const body = textChannelSchema.safeParse(request.body);
+app.post('/api/text-channels', requireSession, channelCreateLimiter, (request, response) => {
+  const body = channelSchema.safeParse(request.body);
   if (!body.success) {
     response.status(400).json({ error: 'Informe um nome de canal válido.' });
     return;
@@ -374,6 +391,7 @@ app.post('/api/text-channels', requireSession, textChannelCreateLimiter, (reques
     body.data.description || `Canal #${name}`,
     currentUser(response).id,
   );
+  broadcast({ type: 'TEXT_CHANNEL_CREATE', channel });
   response.status(201).json({ channel });
 });
 
@@ -404,45 +422,124 @@ app.post(
     }
 
     const message = createTextMessage(channelId, body.data.text, currentUser(response));
+    broadcast({ type: 'TEXT_MESSAGE_CREATE', channelId, message });
     response.status(201).json({ message });
   },
 );
 
-app.get('/api/rooms', requireSession, async (_request, response, next) => {
+// Compartilhada entre GET /api/rooms (fetch inicial/reconexão) e o webhook
+// do LiveKit abaixo (que dispara ROOM_STATE_UPDATE via WebSocket sempre que
+// alguém entra/sai de voz — sem isso não haveria como saber que o estado
+// mudou, já que quem entra direto no LiveKit não passa pela nossa API).
+async function computeRoomSummary(channel: VoiceChannel): Promise<RoomSummary> {
+  const participants = await roomService.listParticipants(channel.id);
+  return {
+    ...channel,
+    participants: participants.map((participant) => {
+      const metadata = parseParticipantMetadata(participant.metadata);
+      const microphoneTrack = participant.tracks.find((track) => track.source === TrackSource.MICROPHONE);
+      return {
+        identity: participant.identity,
+        name: participant.name || participant.identity,
+        participantType: metadata?.participantType ?? 'HUMAN',
+        isSharingScreen: participant.tracks.some((track) => track.source === TrackSource.SCREEN_SHARE),
+        isMuted: microphoneTrack?.muted ?? true,
+      };
+    }),
+  };
+}
+
+app.get('/api/rooms', requireSession, async (_request, response) => {
+  const channels = listVoiceChannels();
   try {
     const activeRoomNames = new Set(
-      (await roomService.listRooms(config.channels.map((channel) => channel.id))).map(
+      (await roomService.listRooms(channels.map((channel) => channel.id))).map(
         (room) => room.name,
       ),
     );
     const rooms: RoomSummary[] = await Promise.all(
-      config.channels.map(async (channel) => {
-        if (!activeRoomNames.has(channel.id)) return { ...channel, participants: [] };
-        const participants = await roomService.listParticipants(channel.id);
-        return {
-          ...channel,
-          participants: participants.map((participant) => {
-            const metadata = parseParticipantMetadata(participant.metadata);
-            const microphoneTrack = participant.tracks.find((track) => track.source === TrackSource.MICROPHONE);
-            return {
-              identity: participant.identity,
-              name: participant.name || participant.identity,
-              participantType: metadata?.participantType ?? 'HUMAN',
-              isSharingScreen: participant.tracks.some((track) => track.source === TrackSource.SCREEN_SHARE),
-              isMuted: microphoneTrack?.muted ?? true,
-            };
-          }),
-        };
-      }),
+      channels.map((channel) =>
+        activeRoomNames.has(channel.id)
+          ? computeRoomSummary(channel)
+          : Promise.resolve({ ...channel, participants: [] }),
+      ),
     );
     response.json({ rooms, livekitAvailable: true });
   } catch (error) {
     console.error('LiveKit indisponível ao consultar salas:', error);
     response.json({
-      rooms: config.channels.map((channel) => ({ ...channel, participants: [] })),
+      rooms: channels.map((channel) => ({ ...channel, participants: [] })),
       livekitAvailable: false,
     });
   }
+});
+
+app.post('/api/voice-channels', requireSession, channelCreateLimiter, (request, response) => {
+  const body = channelSchema.safeParse(request.body);
+  if (!body.success) {
+    response.status(400).json({ error: 'Informe um nome de canal válido.' });
+    return;
+  }
+
+  const name = body.data.name.replace(/\s+/g, ' ');
+  if (getVoiceChannelByName(name)) {
+    response.status(409).json({ error: 'Já existe um canal de voz com esse nome.' });
+    return;
+  }
+  if (listVoiceChannels().length >= 50) {
+    response.status(409).json({ error: 'O servidor atingiu o limite de 50 canais de voz.' });
+    return;
+  }
+
+  const channel = createVoiceChannel(name, body.data.description || `Canal #${name}`, currentUser(response).id);
+  broadcast({ type: 'VOICE_CHANNEL_CREATE', channel });
+  response.status(201).json({ channel });
+});
+
+app.delete('/api/voice-channels/:channelId', requireSession, (request, response) => {
+  const channelId = request.params.channelId;
+  if (typeof channelId !== 'string' || !getVoiceChannelById(channelId)) {
+    response.status(404).json({ error: 'Canal de voz não encontrado.' });
+    return;
+  }
+  if (listVoiceChannels().length <= 1) {
+    response.status(409).json({ error: 'O servidor precisa de pelo menos um canal de voz.' });
+    return;
+  }
+  deleteVoiceChannel(channelId);
+  broadcast({ type: 'VOICE_CHANNEL_DELETE', channelId });
+  response.status(204).end();
+});
+
+const webhookReceiver = new WebhookReceiver(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET);
+const ROOM_STATE_WEBHOOK_EVENTS = new Set([
+  'participant_joined',
+  'participant_left',
+  'room_started',
+  'room_finished',
+]);
+
+app.post('/api/livekit/webhook', express.raw({ type: '*/*' }), async (request, response) => {
+  let event;
+  try {
+    event = await webhookReceiver.receive((request.body as Buffer).toString('utf8'), request.headers.authorization);
+  } catch (error) {
+    console.error('Webhook do LiveKit rejeitado:', error);
+    response.status(401).end();
+    return;
+  }
+
+  const roomName = event.room?.name;
+  const channel = roomName ? getVoiceChannelById(roomName) : undefined;
+  if (channel && ROOM_STATE_WEBHOOK_EVENTS.has(event.event)) {
+    try {
+      const room = event.event === 'room_finished' ? { ...channel, participants: [] } : await computeRoomSummary(channel);
+      broadcast({ type: 'ROOM_STATE_UPDATE', room });
+    } catch (error) {
+      console.error('Falha ao recalcular estado da sala após webhook:', error);
+    }
+  }
+  response.status(200).end();
 });
 
 app.post('/api/rooms/:roomId/participants/:identity/disconnect', requireSession, async (request, response) => {
@@ -450,7 +547,7 @@ app.post('/api/rooms/:roomId/participants/:identity/disconnect', requireSession,
     roomId: request.params.roomId,
     identity: request.params.identity,
   });
-  const room = parsed.success ? config.channels.find((channel) => channel.id === parsed.data.roomId) : undefined;
+  const room = parsed.success ? getVoiceChannelById(parsed.data.roomId) : undefined;
   if (!parsed.success || !room) {
     response.status(400).json({ error: 'Canal de voz inv\u00e1lido.' });
     return;
@@ -460,7 +557,7 @@ app.post('/api/rooms/:roomId/participants/:identity/disconnect', requireSession,
     const participants = await roomService.listParticipants(room.id);
     const authorization = authorizeVoiceDisconnect({
       roomId: room.id,
-      channels: config.channels,
+      channels: listVoiceChannels(),
       requesterId: user.id,
       targetIdentity: parsed.data.identity,
       participantIdentities: participants.map(({ identity }) => identity),
@@ -492,7 +589,13 @@ app.post('/api/rooms/:roomId/participants/:identity/disconnect', requireSession,
         // limpa a sessão interna do SausiMusic.
         await roomService.removeParticipant(room.id, target.identity);
       }
-      deleteMusicBotTextMessagesForVoiceChannel(room.id);
+      for (const clearedChannelId of deleteMusicBotTextMessagesForVoiceChannel(room.id)) {
+        broadcast({
+          type: 'TEXT_MESSAGE_DELETE',
+          channelId: clearedChannelId,
+          messageId: `music-bot:${clearedChannelId}`,
+        });
+      }
     } else {
       await roomService.removeParticipant(room.id, target.identity);
     }
@@ -505,9 +608,7 @@ app.post('/api/rooms/:roomId/participants/:identity/disconnect', requireSession,
 
 app.post('/api/livekit/token', requireSession, async (request, response) => {
   const body = tokenSchema.safeParse(request.body);
-  const room = body.success
-    ? config.channels.find((channel) => channel.id === body.data.roomId)
-    : undefined;
+  const room = body.success ? getVoiceChannelById(body.data.roomId) : undefined;
 
   if (!body.success || !room) {
     response.status(400).json({ error: 'Canal inválido.' });
@@ -565,7 +666,7 @@ app.post('/api/music/command', requireSession, async (request, response) => {
     const authorization = await authorizeMusicCommand({
       roomId: body.data.roomId,
       text: body.data.text,
-      channels: config.channels,
+      channels: listVoiceChannels(),
       requester: { id: user.id, displayName: user.username },
       listParticipantIdentities: async (roomName) =>
         (await roomService.listParticipants(roomName)).map(({ identity }) => identity),
@@ -611,11 +712,20 @@ app.post('/api/music/command', requireSession, async (request, response) => {
       : { message: botResult.message };
     if (body.data.textChannelId) {
       if (nowPlaying) {
-        payload.textMessage = upsertMusicBotTextMessage(
+        const { message, clearedChannelIds } = upsertMusicBotTextMessage(
           body.data.textChannelId,
           botResult.message,
           nowPlaying,
         );
+        payload.textMessage = message;
+        broadcast({ type: 'TEXT_MESSAGE_UPSERT', channelId: body.data.textChannelId, message });
+        for (const clearedChannelId of clearedChannelIds) {
+          broadcast({
+            type: 'TEXT_MESSAGE_DELETE',
+            channelId: clearedChannelId,
+            messageId: `music-bot:${clearedChannelId}`,
+          });
+        }
       } else if (
         authorization.command.command === 'stop' ||
         authorization.command.command === 'leave' ||
@@ -623,7 +733,14 @@ app.post('/api/music/command', requireSession, async (request, response) => {
         (authorization.command.command === 'skip' && !nowPlaying)
       ) {
         const removed = deleteMusicBotTextMessagesForVoiceChannel(authorization.command.channelId);
-        if (removed > 0) payload.removeTextMessage = true;
+        if (removed.length > 0) payload.removeTextMessage = true;
+        for (const clearedChannelId of removed) {
+          broadcast({
+            type: 'TEXT_MESSAGE_DELETE',
+            channelId: clearedChannelId,
+            messageId: `music-bot:${clearedChannelId}`,
+          });
+        }
       }
     }
     response.json(payload);
@@ -643,6 +760,17 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
   response.status(500).json({ error: 'Erro interno do servidor.' });
 });
 
-app.listen(config.PORT, '0.0.0.0', () => {
+const MUSIC_CARD_RESYNC_INTERVAL_MS = 4_000;
+// Mantém os cards de "tocando agora" atualizados (progresso, avanço natural
+// de fila) sem o cliente precisar pollar — o único lugar onde ainda existe
+// polling no sistema, e ele é inteiramente interno ao servidor agora.
+setInterval(() => {
+  for (const textChannelId of listActiveMusicBotChannelIds()) {
+    void refreshMusicBotTextMessage(textChannelId);
+  }
+}, MUSIC_CARD_RESYNC_INTERVAL_MS);
+
+const server = app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`Sausixudos API ouvindo na porta ${config.PORT}`);
 });
+attachRealtime(server);
