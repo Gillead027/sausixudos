@@ -2,7 +2,7 @@
 
 Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord — app privado, self-hosted, para um grupo fechado de amigos. Atualizar conforme cada item avança. Categorias: `DONE`, `PARTIAL`, `MISSING`, `BLOCKED`, `OPTIONAL`, `PREMIUM`, `EXPERIMENTAL`.
 
-Última análise completa do código: 2026-09-09.
+Última análise completa do código: 2026-09-09. Atualizado em 2026-09-09 após implementar e verificar em produção a fundação de WebSocket + canais de voz como dados (ver §1).
 
 ## 0. Arquitetura atual (para não recriar o que já existe)
 
@@ -10,15 +10,15 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 |---|---|---|
 | Frontend web | React + Vite, TypeScript | `apps/web`, ~5.600 linhas. SPA única, sem router de páginas (tudo em `Workspace.tsx`, 2.234 linhas). |
 | Cliente desktop | Electron 44 | `apps/desktop`. Empacotado via electron-builder + GitHub Releases + auto-update. Picker nativo de tela, detecção de atividade (jogo/mídia via `windows-media-sessions`/`ps-list`), CSP restrito. |
-| Backend | Express + TypeScript | `apps/api`, ~1.530 linhas. Sem WebSocket próprio. |
-| Banco | SQLite (`node:sqlite`, arquivo único) | `apps/api/src/db.ts`. Schema minúsculo: `users`, `text_channels`, `text_messages`, `text_bot_messages`. Sem migrations versionadas — `ALTER TABLE` incremental condicional. |
+| Backend | Express + TypeScript | `apps/api`, ~1.530 linhas. WebSocket próprio via `ws` em `apps/api/src/realtime.ts` (autenticado pelo mesmo cookie de sessão). |
+| Banco | SQLite (`node:sqlite`, arquivo único) | `apps/api/src/db.ts`. Schema: `users`, `text_channels`, `text_messages`, `text_bot_messages`, `voice_channels`. Sem migrations versionadas — `ALTER TABLE`/seed condicional. |
 | Autenticação | Cookie assinado (HMAC), stateless | `apps/api/src/session.ts`. Usuário+senha (bcrypt/scrypt a confirmar) + token de convite único global. Sem lista de sessões, sem revogação individual, sem MFA. |
-| Voz/vídeo/tela | LiveKit self-hosted (SFU) | `infra/livekit.yaml`. IP externo direto, **sem TURN/coturn** (aceitável só porque a VPS tem IP público; falha para clientes atrás de NAT simétrico). |
-| Mensagens de texto | Polling HTTP a cada 2s | `apps/web/src/components/TextChannels.tsx:176`. **Não há WebSocket/tempo real real para texto** — só voz/atividade usam o canal de dados do LiveKit. |
-| Bot de música | Node standalone, participante LiveKit real | `apps/music-bot`. YouTube/Spotify(metadata)/SoundCloud, fila real, jitter buffer, scheduler sem deriva (corrigido nesta sessão). |
+| Voz/vídeo/tela | LiveKit self-hosted (SFU) | Config via env var `LIVEKIT_CONFIG` no `docker-compose.yml` (não mais arquivo estático — precisava de `${LIVEKIT_API_KEY}` pro webhook). IP externo direto, **sem TURN/coturn** (aceitável só porque a VPS tem IP público; falha para clientes atrás de NAT simétrico). Webhook (`participant_joined`/`left`/`room_started`/`finished`) empurra estado de sala pro WebSocket da API. |
+| Mensagens de texto | WebSocket em tempo real | `apps/web/src/realtime.ts` + `apps/api/src/realtime.ts`. Fetch HTTP só no boot/reconexão; sem polling. |
+| Bot de música | Node standalone, participante LiveKit real | `apps/music-bot`. YouTube/Spotify(metadata)/SoundCloud, fila real, jitter buffer, scheduler sem deriva (corrigido nesta sessão). Card "tocando agora" resincronizado por um laço periódico *server-side* (não mais pelo poll do cliente). |
 | Upload/mídia | Nenhum. Avatar/banner via `data:` URL em coluna TEXT do SQLite | Sem storage de objetos (S3/MinIO), sem anexos de arquivo em mensagens, sem thumbnails de upload. |
 | Deploy | Docker Compose na VPS (147.93.11.201) + Caddy (TLS) | Serviços: `api`, `web`, `music-bot`, `livekit`, `pot-provider`, `caddy`. Sem Redis, sem fila de jobs, sem observabilidade estruturada. |
-| Conceito de "servidor" | **Não existe.** Um único servidor implícito ("Lobby dos amigos"), hardcoded na UI | Canais de texto são uma lista plana em `text_channels` (sem categorias). Canais de voz vêm de `VOICE_CHANNELS` no `.env` (não são dados de banco). |
+| Conceito de "servidor" | **Não existe.** Um único servidor implícito ("Lobby dos amigos"), hardcoded na UI | Canais de texto são uma lista plana em `text_channels`. Canais de voz agora são a tabela `voice_channels` (CRUD via `/api/voice-channels`, broadcast ao vivo) — ainda sem categorias nem múltiplos servidores. |
 
 **Implicação central**: grande parte do pedido (múltiplos servidores, cargos por servidor, convites por servidor, temas por servidor, boost, server tags, onboarding, fórum, stage, eventos) pressupõe um modelo de dados "servidor" que **não existe hoje**. Isso não é um recurso faltando isoladamente — é uma mudança de esquema que quase tudo do FASE 1 em diante depende. Ver seção 1.
 
@@ -29,17 +29,17 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Item | Status | Nota |
 |---|---|---|
 | Tabela `servers` (múltiplos servidores) | `MISSING` | Hoje é 1 servidor fixo. Precisa existir antes de: cargos, convites por servidor, categorias, boost, server tags, onboarding. |
-| Categorias de canal | `MISSING` | Canais de texto são lista plana; canais de voz vêm do `.env`. |
-| Canais de voz como dados (não `.env`) | `MISSING` | Pré-requisito pra criar/editar/apagar canal de voz pela UI. |
+| Categorias de canal | `MISSING` | Canais de texto e de voz continuam listas planas (sem agrupamento), mesmo já sendo dados de banco. |
+| Canais de voz como dados (não `.env`) | `DONE` | Tabela `voice_channels` (`apps/api/src/db.ts`), CRUD em `apps/api/src/voiceChannels.ts`, rotas `POST`/`DELETE /api/voice-channels`, UI de criação em `Workspace.tsx`. Migração de seed preserva os canais que já existiam via `VOICE_CHANNELS` — verificado contra o banco de produção real após o deploy. O bot de música não valida mais contra uma lista estática carregada no boot (confiava na validação já feita pela API). |
 | Cargos (`roles`) | `MISSING` | Nenhuma tabela, nenhum conceito de cargo hoje. |
-| Permissões granulares (allow/deny/inherit) | `MISSING` | Hoje não há checagem de permissão nenhuma no backend além de "está autenticado". |
+| Permissões granulares (allow/deny/inherit) | `MISSING` | Hoje não há checagem de permissão nenhuma no backend além de "está autenticado" (criar/apagar canal de voz segue esse mesmo padrão, igual canal de texto). |
 | Convites reais (tabela, expiração, usos) | `MISSING` | Hoje é 1 token de convite global fixo no `.env`, sem rastreamento. |
 | Amigos / bloqueios / DMs / grupos | `MISSING` | Nenhuma tabela, nenhuma rota, nenhuma UI. |
-| WebSocket real para texto/presença/typing | `MISSING` | Texto usa polling de 2s. Isso precisa existir antes de typing indicator, reações em tempo real, edição/exclusão ao vivo. |
+| WebSocket real para texto/presença/typing | `DONE` (texto/salas/canais) — `MISSING` (typing/presença de status) | `apps/api/src/realtime.ts` (`ws`, autenticado por cookie no handshake) + `apps/web/src/realtime.ts` (cliente com reconexão exponencial). Substituiu os 3 loops de polling (mensagens 2s, salas 4s, canais de texto 10s) por eventos `TEXT_MESSAGE_*`/`TEXT_CHANNEL_CREATE`/`VOICE_CHANNEL_*`/`ROOM_STATE_UPDATE`. Estado de sala de voz vem de webhook do LiveKit, não mais de poll de `roomService.listRooms`. Verificado ponta-a-ponta com dois clientes reais (latência ~7ms vs. até 2000ms do polling antigo) antes do deploy. Ainda falta: typing indicator e presença de status (online/ausente/dnd) — esses eventos não existem ainda, só os que já tinham equivalente em polling. |
 | Storage de objetos (uploads) | `MISSING` | Avatar/banner como `data:` URL em TEXT já é um gambiarra que não escala pra anexos de arquivo/vídeo. |
-| Migrations versionadas | `PARTIAL` | Hoje é `ALTER TABLE IF NOT EXISTS column` condicional — funciona para colunas simples, não para as tabelas novas grandes que vêm a seguir. Precisa de um sistema de migration com versão antes de mexer no schema pesado. |
+| Migrations versionadas | `PARTIAL` | Ainda é `CREATE TABLE IF NOT EXISTS`/seed condicional (sem versionamento formal), mas já suportou uma tabela nova (`voice_channels`) com sucesso e sem perda de dados em produção. Continua não sendo um sistema de migration de verdade — precisa existir antes das tabelas maiores (`servers`, `roles`, etc.). |
 
-**Recomendação**: antes de qualquer feature nova de "servidor/cargo/DM", fazer uma migration de fundação: introduzir `servers`, `server_members`, `channels` (unificando texto+voz como dados), `roles`, `role_permissions`, `invites`, `friendships`, `dm_channels`, e trocar polling por WebSocket (ou Server-Sent Events) para texto. Isso é trabalho de arquitetura, não de UI, e deveria ser o item #1 do FASE 1.
+**Recomendação**: a fundação de WebSocket + canais de voz como dados já está implementada e em produção (ver linhas acima). O próximo passo de fundação, ainda não feito, é o mesmo de antes: `servers`, `server_members`, `channels` unificando texto+voz sob um servidor, `roles`, `role_permissions`, `invites` reais, `friendships`, `dm_channels`. O WebSocket já existente deve ser estendido (não recriado) com os novos tipos de evento que essas features vão precisar.
 
 ---
 
@@ -77,11 +77,11 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Item | Status |
 |---|---|
 | Servidores | `MISSING` (ver §1) |
-| Canais (texto) | `DONE` básico — criar, listar, enviar/receber (via polling) |
-| Canais (voz) | `PARTIAL` — funcionam via LiveKit, mas são config estática, não dados |
+| Canais (texto) | `DONE` básico — criar, listar, enviar/receber em tempo real via WebSocket |
+| Canais (voz) | `DONE` — dados reais (`voice_channels`), criar/apagar pela UI, ainda sem categorias |
 | DM | `MISSING` |
 | Mensagens (texto simples) | `DONE` básico |
-| Mensagens (tempo real de verdade) | `PARTIAL` — polling 2s, não WebSocket |
+| Mensagens (tempo real de verdade) | `DONE` — WebSocket, ver §1 |
 | Amigos | `MISSING` |
 | Cargos | `MISSING` |
 | Permissões | `MISSING` |
@@ -211,7 +211,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 3. Compartilhamento de áudio — `DONE`
 4. Vídeo — `DONE` básico (falta fundo/blur)
 5. Conversar com amigos — `PARTIAL` (chat de texto existe; sistema de "amigos" formal não existe — hoje todo mundo no servidor único já vê tudo)
-6. Servidores e canais — `PARTIAL` (canais sim; múltiplos servidores não)
+6. Servidores e canais — `PARTIAL` (canais de texto e voz são dados reais com CRUD e tempo real; múltiplos servidores/categorias não)
 7. Bots de música — `DONE`
 8. Personalização de perfil — `DONE`
 9. Temas — `DONE`
