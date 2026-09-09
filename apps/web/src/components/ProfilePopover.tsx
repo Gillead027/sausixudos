@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ACCENT_COLORS, type UserSession } from '@sausixudos/shared';
+import { ACCENT_COLORS, type Activity, type UserSession } from '@sausixudos/shared';
 import { api } from '../api';
 import { Avatar } from './Workspace';
+import { ActivityLine, ListeningActivityCard } from './ActivityDisplay';
 import { CloseIcon } from './Icons';
 
 export interface ProfilePopoverTarget {
@@ -60,10 +61,15 @@ function clampPosition(rect: DOMRect): { top: number; left: number } {
 export function ProfilePopover({
   target,
   ownSession,
+  activity,
   onClose,
 }: {
   target: ProfilePopoverTarget | null;
   ownSession: UserSession;
+  // Só existe enquanto a pessoa está conectada a um canal de voz em que você
+  // também está (LiveKit não expõe metadata de quem não compartilha sala com
+  // você) — ver Workspace.tsx, onde isso vem de typedParticipants ao vivo.
+  activity?: Activity | null;
   onClose: () => void;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -111,6 +117,11 @@ export function ProfilePopover({
           {profile.pronouns && <em>{profile.pronouns}</em>}
           {profile.statusText && <span>{profile.statusText}</span>}
           {profile.bio && <p>{profile.bio}</p>}
+          {activity && (
+            activity.kind === 'listening'
+              ? <ListeningActivityCard activity={activity} />
+              : <div className="profile-activity-line"><ActivityLine activity={activity} /></div>
+          )}
         </div>
       )}
     </div>

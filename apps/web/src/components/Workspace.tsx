@@ -63,6 +63,7 @@ import {
   UserIcon,
   VoiceIcon,
 } from './Icons';
+import { ActivityLine } from './ActivityDisplay';
 import { ProfilePopover, type ProfilePopoverTarget } from './ProfilePopover';
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
@@ -146,12 +147,6 @@ function avatarColorIndex(name: string): number {
   return index % ACCENT_COLORS.length;
 }
 
-function formatActivity(activity: Activity): string {
-  if (activity.kind === 'playing') return `Jogando ${activity.name}`;
-  return activity.artist
-    ? `Ouvindo ${activity.title} de ${activity.artist}`
-    : `Ouvindo ${activity.app} — ${activity.title}`;
-}
 
 export function Avatar({
   name,
@@ -455,7 +450,7 @@ function ParticipantRow({
             <span>Ocioso</span>
           ) : (
             metadata?.participantType === 'HUMAN' && metadata.activity && (
-              <span>{formatActivity(metadata.activity)}</span>
+              <ActivityLine activity={metadata.activity} />
             )
           )}
         </div>
@@ -1734,6 +1729,16 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
 
   const typedParticipants = voice.participants as (LocalParticipant | RemoteParticipant)[];
   const activeTextChannel = textChannels.find(({ id }) => id === selectedTextChannelId);
+  // Atividade só existe pra quem está no mesmo canal de voz que você agora —
+  // o LiveKit não entrega metadata de participantes de salas que você não
+  // entrou, então fora daí o popover mostra o perfil sem essa seção.
+  const profileActivity = profileTarget
+    ? (() => {
+        const match = typedParticipants.find((participant) => participant.identity === profileTarget.userId);
+        const metadata = match ? parseParticipantMetadata(match.metadata) : null;
+        return metadata?.participantType === 'HUMAN' ? metadata.activity : null;
+      })()
+    : null;
 
   return (
     <main className="workspace">
@@ -1823,7 +1828,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           deafened={voice.deafened || (voice.shareAudioActive && !allowListenWhileSharing)}
         />
       )}
-      <ProfilePopover target={profileTarget} ownSession={session} onClose={() => setProfileTarget(null)} />
+      <ProfilePopover target={profileTarget} ownSession={session} activity={profileActivity} onClose={() => setProfileTarget(null)} />
       <aside className="server-rail" aria-label="Servidores">
         <button className="server-button home" type="button" title="Início" aria-label="Início"><span className="brand-mark compact" aria-hidden="true"><i /><i /></span></button>
         <span className="rail-divider" />

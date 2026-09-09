@@ -97,3 +97,11 @@ export function ImageIcon(props: IconProps) {
 export function PaletteIcon(props: IconProps) {
   return <Icon {...props}><circle cx="12" cy="12" r="9" /><circle cx="8.5" cy="10" r="1.3" fill="currentColor" /><circle cx="12" cy="8" r="1.3" fill="currentColor" /><circle cx="15.5" cy="10" r="1.3" fill="currentColor" /><path d="M12 21a1.6 1.6 0 0 1 0-9c2 0 3-1 3-2.5S14 7 12 7" /></Icon>;
 }
+
+export function MusicNoteIcon(props: IconProps) {
+  return <Icon {...props}><path d="M9 18V5l11-2v13" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="17.5" cy="16" r="2.5" /></Icon>;
+}
+
+export function GameControllerIcon(props: IconProps) {
+  return <Icon {...props}><rect x="2.5" y="7.5" width="19" height="10" rx="5" /><path d="M7 10.5v4M5 12.5h4" /><circle cx="16" cy="10.5" r="1" fill="currentColor" /><circle cx="18.5" cy="13" r="1" fill="currentColor" /></Icon>;
+}

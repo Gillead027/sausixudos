@@ -63,6 +63,17 @@ export interface ListeningActivity {
   app: string;
   title: string;
   artist: string;
+  // Capa do álbum já reduzida a um thumbnail pequeno pelo app desktop (ver
+  // apps/desktop/src/activity.ts) — cabe tranquilamente no metadata do
+  // participante do LiveKit. Ausente quando o app de origem não publica arte.
+  thumbnailDataUrl?: string;
+  // positionMs é uma amostra pontual tirada em updatedAt (epoch ms), não um
+  // valor ao vivo — quem exibe a barra de progresso projeta o tempo decorrido
+  // como positionMs + (Date.now() - updatedAt) em vez de reenviar a posição a
+  // cada segundo, o que inundaria o metadata do LiveKit com atualizações.
+  positionMs?: number;
+  durationMs?: number;
+  updatedAt?: number;
 }
 
 export type Activity = PlayingActivity | ListeningActivity;
@@ -99,7 +110,16 @@ function parseActivity(value: unknown): Activity | null {
     typeof activity.title === 'string' &&
     typeof activity.artist === 'string'
   ) {
-    return { kind: 'listening', app: activity.app, title: activity.title, artist: activity.artist };
+    return {
+      kind: 'listening',
+      app: activity.app,
+      title: activity.title,
+      artist: activity.artist,
+      ...(typeof activity.thumbnailDataUrl === 'string' ? { thumbnailDataUrl: activity.thumbnailDataUrl } : {}),
+      ...(typeof activity.positionMs === 'number' ? { positionMs: activity.positionMs } : {}),
+      ...(typeof activity.durationMs === 'number' ? { durationMs: activity.durationMs } : {}),
+      ...(typeof activity.updatedAt === 'number' ? { updatedAt: activity.updatedAt } : {}),
+    };
   }
   return null;
 }
