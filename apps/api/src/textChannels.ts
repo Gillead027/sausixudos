@@ -7,6 +7,7 @@ import {
   type TextMessage,
 } from '@sausixudos/shared';
 import { db } from './db.js';
+import { getReactionsByChannel, getReactionsForMessage } from './reactions.js';
 import { slugify } from './slug.js';
 import type { UserRecord } from './users.js';
 
@@ -191,8 +192,13 @@ export function createTextChannel(
 }
 
 export function listTextMessages(channelId: string, limit = 100): TextMessage[] {
+  const reactionsByMessage = getReactionsByChannel(channelId);
   const humanMessages = (listMessagesStatement.all(channelId, limit) as unknown as TextMessageRow[])
-    .map(toMessage);
+    .map(toMessage)
+    .map((message) => {
+      const reactions = reactionsByMessage.get(message.id);
+      return reactions?.length ? { ...message, reactions } : message;
+    });
   const botMessages = (listBotMessagesStatement.all(channelId, limit) as unknown as TextBotMessageRow[])
     .map(toBotMessage);
   return [...humanMessages, ...botMessages]
@@ -227,7 +233,10 @@ export function createTextMessage(
 
 export function getTextMessageById(channelId: string, messageId: string): TextMessage | undefined {
   const row = selectMessageByIdStatement.get(messageId, channelId) as unknown as TextMessageRow | undefined;
-  return row && toMessage(row);
+  if (!row) return undefined;
+  const message = toMessage(row);
+  const reactions = getReactionsForMessage(messageId);
+  return reactions.length ? { ...message, reactions } : message;
 }
 
 export type EditTextMessageResult =

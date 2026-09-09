@@ -43,6 +43,7 @@ import {
   deleteMusicBotTextMessagesForVoiceChannel,
   deleteTextMessage,
   editTextMessage,
+  getTextMessageById,
   upsertMusicBotTextMessage,
   createTextChannel,
   createTextMessage,
@@ -53,6 +54,7 @@ import {
   listTextChannels,
   listTextMessages,
 } from './textChannels.js';
+import { addReaction, isValidReactionEmoji, removeReaction } from './reactions.js';
 import { authorizeMusicCommand } from './musicCommands.js';
 import { fetchMusicThumbnail } from './musicThumbnails.js';
 import { authorizeVoiceDisconnect } from './voiceModeration.js';
@@ -98,6 +100,14 @@ const textMessageLimiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { error: 'Você está enviando mensagens rápido demais.' },
+});
+
+const reactionLimiter = rateLimit({
+  windowMs: 10 * 1000,
+  limit: 40,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Muitas reações em pouco tempo.' },
 });
 
 const channelCreateLimiter = rateLimit({
@@ -170,6 +180,10 @@ const channelSchema = z.object({
 
 const textMessageSchema = z.object({
   text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH),
+});
+
+const reactionSchema = z.object({
+  emoji: z.string().refine(isValidReactionEmoji, 'Emoji não suportado.'),
 });
 
 function requireSession(request: Request, response: Response, next: NextFunction): void {
@@ -480,6 +494,61 @@ app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, 
   broadcast({ type: 'TEXT_MESSAGE_DELETE', channelId, messageId });
   response.status(204).end();
 });
+
+app.post(
+  '/api/text-channels/:channelId/messages/:messageId/reactions',
+  requireSession,
+  reactionLimiter,
+  (request, response) => {
+    const channelId = request.params.channelId;
+    const messageId = request.params.messageId;
+    const body = reactionSchema.safeParse(request.body);
+    if (
+      typeof channelId !== 'string' ||
+      typeof messageId !== 'string' ||
+      !getTextChannelById(channelId) ||
+      !getTextMessageById(channelId, messageId)
+    ) {
+      response.status(404).json({ error: 'Mensagem não encontrada.' });
+      return;
+    }
+    if (!body.success) {
+      response.status(400).json({ error: 'Emoji não suportado.' });
+      return;
+    }
+
+    const userId = currentUser(response).id;
+    addReaction(messageId, body.data.emoji, userId);
+    broadcast({ type: 'TEXT_MESSAGE_REACTION_ADD', channelId, messageId, emoji: body.data.emoji, userId });
+    response.status(204).end();
+  },
+);
+
+app.delete(
+  '/api/text-channels/:channelId/messages/:messageId/reactions/:emoji',
+  requireSession,
+  reactionLimiter,
+  (request, response) => {
+    const channelId = request.params.channelId;
+    const messageId = request.params.messageId;
+    const emoji = request.params.emoji;
+    if (
+      typeof channelId !== 'string' ||
+      typeof messageId !== 'string' ||
+      !getTextChannelById(channelId) ||
+      !getTextMessageById(channelId, messageId) ||
+      !isValidReactionEmoji(emoji)
+    ) {
+      response.status(404).json({ error: 'Mensagem ou reação não encontrada.' });
+      return;
+    }
+
+    const userId = currentUser(response).id;
+    removeReaction(messageId, emoji, userId);
+    broadcast({ type: 'TEXT_MESSAGE_REACTION_REMOVE', channelId, messageId, emoji, userId });
+    response.status(204).end();
+  },
+);
 
 // Compartilhada entre GET /api/rooms (fetch inicial/reconexão) e o webhook
 // do LiveKit abaixo (que dispara ROOM_STATE_UPDATE via WebSocket sempre que

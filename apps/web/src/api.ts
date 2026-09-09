@@ -3,6 +3,7 @@ import type {
   LiveKitTokenResponse,
   MusicCommandResponse,
   PublicConfig,
+  ReactionEmoji,
   RoomSummary,
   TextChannel,
   TextMessage,
@@ -101,6 +102,16 @@ export const api = {
     request<void>(`/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`, {
       method: 'DELETE',
     }),
+  addReaction: (channelId: string, messageId: string, emoji: ReactionEmoji) =>
+    request<void>(
+      `/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/reactions`,
+      { method: 'POST', body: JSON.stringify({ emoji }) },
+    ),
+  removeReaction: (channelId: string, messageId: string, emoji: ReactionEmoji) =>
+    request<void>(
+      `/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(emoji)}`,
+      { method: 'DELETE' },
+    ),
   getLiveKitToken: (roomId: string) =>
     request<LiveKitTokenResponse>('/api/livekit/token', {
       method: 'POST',

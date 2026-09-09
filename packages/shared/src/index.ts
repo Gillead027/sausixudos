@@ -373,6 +373,17 @@ export interface TextChannel {
   createdAt: number;
 }
 
+// Emoji unicode curados pra reação — ainda não existe um picker completo de
+// busca/categorias (ver DISCORD_PARITY_PLAN.md), então tanto o cliente
+// quanto o servidor validam contra esta mesma lista fechada por enquanto.
+export const REACTION_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🎉', '👀', '🔥'] as const;
+export type ReactionEmoji = (typeof REACTION_EMOJI)[number];
+
+export interface MessageReactionGroup {
+  emoji: ReactionEmoji;
+  userIds: string[];
+}
+
 export interface TextMessage {
   id: string;
   channelId: string;
@@ -383,6 +394,7 @@ export interface TextMessage {
   sentAt: number;
   editedAt?: number;
   musicCard?: MusicNowPlayingCard;
+  reactions?: MessageReactionGroup[];
 }
 
 // Eventos empurrados pelo WebSocket da API (ver apps/api/src/realtime.ts) —
@@ -396,4 +408,6 @@ export type RealtimeEvent =
   | { type: 'TEXT_CHANNEL_CREATE'; channel: TextChannel }
   | { type: 'VOICE_CHANNEL_CREATE'; channel: VoiceChannel }
   | { type: 'VOICE_CHANNEL_DELETE'; channelId: string }
-  | { type: 'ROOM_STATE_UPDATE'; room: RoomSummary };
+  | { type: 'ROOM_STATE_UPDATE'; room: RoomSummary }
+  | { type: 'TEXT_MESSAGE_REACTION_ADD'; channelId: string; messageId: string; emoji: ReactionEmoji; userId: string }
+  | { type: 'TEXT_MESSAGE_REACTION_REMOVE'; channelId: string; messageId: string; emoji: ReactionEmoji; userId: string };

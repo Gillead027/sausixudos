@@ -532,6 +532,25 @@ button:disabled { cursor: default; opacity: .45; }
 }
 .message-edit-hint { margin-top: 3px; color: var(--text-muted); font-size: 9px; }
 
+/* Reações — pílulas abaixo da mensagem + paleta curada acionada pela barra de ações */
+.message-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.reaction-pill {
+  display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-pill);
+  color: var(--text-secondary); background: var(--panel-raised); font-size: 11px; cursor: pointer;
+}
+.reaction-pill:hover { border-color: var(--accent); }
+.reaction-pill.reacted { border-color: var(--accent); color: var(--text-primary); background: var(--accent-glow); }
+.reaction-picker-anchor { position: relative; }
+.reaction-picker {
+  position: absolute; top: 100%; right: 0; z-index: 3; margin-top: 4px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 5px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-sm);
+  background: var(--panel-raised); box-shadow: var(--shadow-md);
+}
+.reaction-picker button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: none; font-size: 15px; cursor: pointer; }
+.reaction-picker button:hover { background: var(--hover); }
+
 /* Markdown de chat — negrito/itálico/sublinhado/tachado herdam o texto ao
    redor; código e spoiler precisam de estilo próprio. */
 .md-inline-code { padding: 1px 4px; border-radius: 3px; color: #e3a8ff; background: rgba(0, 0, 0, .3); font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px; }

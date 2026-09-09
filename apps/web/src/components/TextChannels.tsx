@@ -1,9 +1,11 @@
 import { type FormEvent, type RefObject, useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   CHAT_MESSAGE_MAX_LENGTH,
+  REACTION_EMOJI,
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
   type MusicCommandResponse,
+  type ReactionEmoji,
   type TextChannel,
   type TextMessage,
   type UserSession,
@@ -13,7 +15,7 @@ import { routeTextChannelInput } from '../musicCommandRouting';
 import { onRealtimeConnect, onRealtimeEvent } from '../realtime';
 import { MarkdownText } from './Markdown';
 import { MusicCard } from './MusicCard';
-import { CloseIcon, CopyIcon, EditIcon, MessageIcon, SearchIcon, TrashIcon, VoiceIcon } from './Icons';
+import { CloseIcon, CopyIcon, EditIcon, MessageIcon, SearchIcon, SmileIcon, TrashIcon, VoiceIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 
@@ -27,6 +29,40 @@ function applyIncomingMessage(current: TextMessage[], incoming: TextMessage): Te
   const index = current.findIndex(({ id }) => id === incoming.id);
   const next = index < 0 ? [...current, incoming] : current.map((message, position) => (position === index ? incoming : message));
   return next.sort((left, right) => left.sentAt - right.sentAt);
+}
+
+// Aplica um add/remove de reação vindo do WebSocket direto no array local,
+// sem precisar buscar a mensagem inteira de novo — os grupos por emoji só
+// existem enquanto tiverem pelo menos um usuário.
+function applyReactionChange(
+  current: TextMessage[],
+  messageId: string,
+  emoji: ReactionEmoji,
+  userId: string,
+  action: 'add' | 'remove',
+): TextMessage[] {
+  return current.map((message) => {
+    if (message.id !== messageId) return message;
+    const groups = message.reactions ?? [];
+    const index = groups.findIndex((group) => group.emoji === emoji);
+
+    if (action === 'add') {
+      if (index < 0) return { ...message, reactions: [...groups, { emoji, userIds: [userId] }] };
+      if (groups[index]!.userIds.includes(userId)) return message;
+      const nextGroups = groups.map((group, position) =>
+        position === index ? { ...group, userIds: [...group.userIds, userId] } : group,
+      );
+      return { ...message, reactions: nextGroups };
+    }
+
+    if (index < 0) return message;
+    const remainingUserIds = groups[index]!.userIds.filter((id) => id !== userId);
+    const nextGroups = remainingUserIds.length
+      ? groups.map((group, position) => (position === index ? { ...group, userIds: remainingUserIds } : group))
+      : groups.filter((_, position) => position !== index);
+    const { reactions: _droppedReactions, ...rest } = message;
+    return nextGroups.length ? { ...rest, reactions: nextGroups } : rest;
+  });
 }
 
 const textAvatarCache = new Map<string, string>();
@@ -138,6 +174,58 @@ function MessageEditForm({
   );
 }
 
+// Sem picker de emoji completo ainda (busca/categorias — ver
+// DISCORD_PARITY_PLAN.md): paleta curada fixa, igual servidor e cliente
+// validam contra a mesma lista em REACTION_EMOJI.
+function ReactionPicker({ onSelect, onClose }: { onSelect: (emoji: ReactionEmoji) => void; onClose: () => void }) {
+  useEffect(() => {
+    const handlePointerDown = () => onClose();
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [onClose]);
+
+  return (
+    <div className="reaction-picker" onMouseDown={(event) => event.stopPropagation()} role="menu" aria-label="Escolher reação">
+      {REACTION_EMOJI.map((emoji) => (
+        <button key={emoji} type="button" role="menuitem" onClick={() => onSelect(emoji)}>
+          {emoji}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ReactionBar({
+  message,
+  ownUserId,
+  onToggle,
+}: {
+  message: TextMessage;
+  ownUserId: string;
+  onToggle: (emoji: ReactionEmoji, reacted: boolean) => void;
+}) {
+  if (!message.reactions?.length) return null;
+  return (
+    <div className="message-reactions">
+      {message.reactions.map((group) => {
+        const reacted = group.userIds.includes(ownUserId);
+        return (
+          <button
+            key={group.emoji}
+            type="button"
+            className={`reaction-pill ${reacted ? 'reacted' : ''}`}
+            onClick={() => onToggle(group.emoji, reacted)}
+            title={reacted ? 'Você reagiu — clique para remover' : `${group.userIds.length} reação(ões)`}
+          >
+            <span aria-hidden="true">{group.emoji}</span>
+            <span>{group.userIds.length}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function HumanTextMessageRow({
   message,
   continued,
@@ -148,6 +236,7 @@ function HumanTextMessageRow({
   onCancelEdit,
   onSaveEdit,
   onDelete,
+  onToggleReaction,
 }: {
   message: TextMessage;
   continued: boolean;
@@ -158,10 +247,12 @@ function HumanTextMessageRow({
   onCancelEdit: () => void;
   onSaveEdit: (text: string) => Promise<void>;
   onDelete: () => void;
+  onToggleReaction: (emoji: ReactionEmoji, reacted: boolean) => void;
 }) {
   const avatarUrl = useTextAvatar(message.senderId, session);
   const initial = message.senderName.trim().charAt(0).toUpperCase() || '?';
   const isOwn = message.senderId === session.id;
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
   return (
     <article className={`message text-message ${continued ? 'continued' : ''}`}>
       <button
@@ -194,12 +285,27 @@ function HumanTextMessageRow({
         ) : (
           <p><MarkdownText text={message.text} /></p>
         )}
+        <ReactionBar message={message} ownUserId={session.id} onToggle={onToggleReaction} />
       </div>
       {!isEditing && (
         <div className="message-hover-actions" role="toolbar" aria-label="Ações da mensagem">
           <button type="button" title="Copiar texto" aria-label="Copiar texto" onClick={() => void navigator.clipboard.writeText(message.text)}>
             <CopyIcon size={14} />
           </button>
+          <div className="reaction-picker-anchor">
+            <button type="button" title="Adicionar reação" aria-label="Adicionar reação" onClick={() => setShowReactionPicker((open) => !open)}>
+              <SmileIcon size={14} />
+            </button>
+            {showReactionPicker && (
+              <ReactionPicker
+                onSelect={(emoji) => {
+                  setShowReactionPicker(false);
+                  onToggleReaction(emoji, false);
+                }}
+                onClose={() => setShowReactionPicker(false)}
+              />
+            )}
+          </div>
           {isOwn && (
             <>
               <button type="button" title="Editar mensagem" aria-label="Editar mensagem" onClick={onStartEdit}>
@@ -227,6 +333,7 @@ function TextMessageRow(props: {
   onCancelEdit: () => void;
   onSaveEdit: (text: string) => Promise<void>;
   onDelete: () => void;
+  onToggleReaction: (emoji: ReactionEmoji, reacted: boolean) => void;
 }) {
   return props.message.senderType === 'BOT'
     ? <BotTextMessageRow message={props.message} onMusicCommand={props.onMusicCommand} />
@@ -241,6 +348,7 @@ function TextMessageRow(props: {
         onCancelEdit={props.onCancelEdit}
         onSaveEdit={props.onSaveEdit}
         onDelete={props.onDelete}
+        onToggleReaction={props.onToggleReaction}
       />
     );
 }
@@ -285,6 +393,19 @@ export function TextChannelView({
       setMessages((current) => current.filter(({ id }) => id !== messageId));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Não foi possível apagar a mensagem.');
+    }
+  }
+
+  // Aplica localmente na hora (sem esperar o eco do próprio WebSocket) pra
+  // parecer instantâneo; o eco chega de qualquer forma e é idempotente.
+  async function toggleReaction(messageId: string, emoji: ReactionEmoji, reacted: boolean) {
+    setMessages((current) => applyReactionChange(current, messageId, emoji, session.id, reacted ? 'remove' : 'add'));
+    try {
+      if (reacted) await api.removeReaction(channel.id, messageId, emoji);
+      else await api.addReaction(channel.id, messageId, emoji);
+    } catch {
+      // Reverte o otimismo local — o próximo fetch/reconexão também corrigiria.
+      setMessages((current) => applyReactionChange(current, messageId, emoji, session.id, reacted ? 'add' : 'remove'));
     }
   }
 
@@ -337,6 +458,10 @@ export function TextChannelView({
       } else if (event.type === 'TEXT_MESSAGE_DELETE') {
         if (event.channelId !== channel.id) return;
         setMessages((current) => current.filter(({ id }) => id !== event.messageId));
+      } else if (event.type === 'TEXT_MESSAGE_REACTION_ADD' || event.type === 'TEXT_MESSAGE_REACTION_REMOVE') {
+        if (event.channelId !== channel.id) return;
+        const action = event.type === 'TEXT_MESSAGE_REACTION_ADD' ? 'add' : 'remove';
+        setMessages((current) => applyReactionChange(current, event.messageId, event.emoji, event.userId, action));
       }
     });
   }, [channel.id]);
@@ -420,6 +545,7 @@ export function TextChannelView({
               onCancelEdit={() => setEditingMessageId(null)}
               onSaveEdit={(text) => saveMessageEdit(message.id, text)}
               onDelete={() => void deleteMessage(message.id)}
+              onToggleReaction={(emoji, reacted) => void toggleReaction(message.id, emoji, reacted)}
               onMusicCommand={async (commandText) => {
                 if (!voiceChannelId) {
                   throw new Error('Você precisa estar em um canal de voz para usar os controles do SausiMusic.');
