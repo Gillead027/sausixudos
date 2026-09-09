@@ -180,6 +180,7 @@ const channelSchema = z.object({
 
 const textMessageSchema = z.object({
   text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH),
+  replyToMessageId: z.string().min(1).max(64).optional(),
 });
 
 const reactionSchema = z.object({
@@ -436,8 +437,12 @@ app.post(
       response.status(400).json({ error: 'A mensagem deve ter entre 1 e 500 caracteres.' });
       return;
     }
+    if (body.data.replyToMessageId && !getTextMessageById(channelId, body.data.replyToMessageId)) {
+      response.status(404).json({ error: 'Mensagem original não encontrada.' });
+      return;
+    }
 
-    const message = createTextMessage(channelId, body.data.text, currentUser(response));
+    const message = createTextMessage(channelId, body.data.text, currentUser(response), body.data.replyToMessageId);
     broadcast({ type: 'TEXT_MESSAGE_CREATE', channelId, message });
     response.status(201).json({ message });
   },

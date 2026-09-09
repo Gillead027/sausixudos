@@ -395,6 +395,11 @@ export interface TextMessage {
   editedAt?: number;
   musicCard?: MusicNowPlayingCard;
   reactions?: MessageReactionGroup[];
+  // Só o id — sem snapshot congelado do texto original. O cliente resolve o
+  // preview olhando a mensagem já carregada na conversa (reflete edição ao
+  // vivo, igual o Discord de verdade); se não achar (fora da janela
+  // carregada, ou apagada), mostra um placeholder de "mensagem original".
+  replyToMessageId?: string;
 }
 
 // Eventos empurrados pelo WebSocket da API (ver apps/api/src/realtime.ts) —

@@ -88,10 +88,10 @@ export const api = {
     request<void>(`/api/voice-channels/${encodeURIComponent(channelId)}`, { method: 'DELETE' }),
   getTextMessages: (channelId: string) =>
     request<{ messages: TextMessage[] }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages`),
-  sendTextMessage: (channelId: string, text: string) =>
+  sendTextMessage: (channelId: string, text: string, replyToMessageId?: string) =>
     request<{ message: TextMessage }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(replyToMessageId ? { replyToMessageId } : {}) }),
     }),
   editTextMessage: (channelId: string, messageId: string, text: string) =>
     request<{ message: TextMessage }>(

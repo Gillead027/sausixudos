@@ -27,6 +27,7 @@ interface TextMessageRow {
   text: string;
   created_at: number;
   edited_at: number | null;
+  reply_to_message_id: string | null;
 }
 
 interface TextBotMessageRow {
@@ -49,7 +50,7 @@ const insertChannelStatement = db.prepare(
   'INSERT INTO text_channels (id, name, description, created_by, created_at) VALUES (?, ?, ?, ?, ?)',
 );
 const insertMessageStatement = db.prepare(
-  'INSERT INTO text_messages (id, channel_id, sender_id, text, created_at) VALUES (?, ?, ?, ?, ?)',
+  'INSERT INTO text_messages (id, channel_id, sender_id, text, created_at, reply_to_message_id) VALUES (?, ?, ?, ?, ?, ?)',
 );
 const listMessagesStatement = db.prepare(`
   SELECT
@@ -59,7 +60,8 @@ const listMessagesStatement = db.prepare(`
     users.username AS sender_name,
     messages.text,
     messages.created_at,
-    messages.edited_at
+    messages.edited_at,
+    messages.reply_to_message_id
   FROM text_messages AS messages
   INNER JOIN users ON users.id = messages.sender_id
   WHERE messages.channel_id = ?
@@ -74,7 +76,8 @@ const selectMessageByIdStatement = db.prepare(`
     users.username AS sender_name,
     messages.text,
     messages.created_at,
-    messages.edited_at
+    messages.edited_at,
+    messages.reply_to_message_id
   FROM text_messages AS messages
   INNER JOIN users ON users.id = messages.sender_id
   WHERE messages.id = ? AND messages.channel_id = ?
@@ -127,6 +130,7 @@ function toMessage(row: TextMessageRow): TextMessage {
     text: row.text,
     sentAt: row.created_at,
     ...(row.edited_at !== null ? { editedAt: row.edited_at } : {}),
+    ...(row.reply_to_message_id !== null ? { replyToMessageId: row.reply_to_message_id } : {}),
   };
 }
 
@@ -210,6 +214,7 @@ export function createTextMessage(
   channelId: string,
   text: string,
   sender: UserRecord,
+  replyToMessageId?: string,
 ): TextMessage {
   const message: TextMessage = {
     id: randomUUID(),
@@ -219,6 +224,7 @@ export function createTextMessage(
     senderType: 'HUMAN',
     text,
     sentAt: Date.now(),
+    ...(replyToMessageId ? { replyToMessageId } : {}),
   };
   insertMessageStatement.run(
     message.id,
@@ -226,6 +232,7 @@ export function createTextMessage(
     message.senderId,
     message.text,
     message.sentAt,
+    replyToMessageId ?? null,
   );
   return message;
 }

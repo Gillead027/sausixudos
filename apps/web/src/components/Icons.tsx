@@ -125,3 +125,7 @@ export function CheckIcon(props: IconProps) {
 export function SmileIcon(props: IconProps) {
   return <Icon {...props}><circle cx="12" cy="12" r="9" /><path d="M8.5 13.5c1 1.3 2.2 2 3.5 2s2.5-.7 3.5-2" /><circle cx="9" cy="9.5" r="1" fill="currentColor" /><circle cx="15" cy="9.5" r="1" fill="currentColor" /></Icon>;
 }
+
+export function ReplyIcon(props: IconProps) {
+  return <Icon {...props}><path d="M9 6 4 11l5 5" /><path d="M4 11h9a6 6 0 0 1 6 6v2" /></Icon>;
+}

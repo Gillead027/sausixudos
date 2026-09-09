@@ -551,6 +551,30 @@ button:disabled { cursor: default; opacity: .45; }
 .reaction-picker button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: none; font-size: 15px; cursor: pointer; }
 .reaction-picker button:hover { background: var(--hover); }
 
+/* Resposta — preview citando a mensagem original acima do conteúdo, banner
+   de "respondendo a" acima do compositor, e destaque temporário ao pular
+   pra mensagem original a partir do preview. */
+.message-reply-preview {
+  display: flex; align-items: center; gap: 5px; max-width: 100%; margin-bottom: 2px; padding: 0;
+  border: 0; background: none; color: var(--text-muted); font-size: 11px; cursor: pointer; overflow: hidden;
+}
+.message-reply-preview:hover:not(:disabled) { color: var(--text-secondary); }
+.message-reply-preview:disabled { cursor: default; }
+.message-reply-preview strong { flex: none; color: var(--text-secondary); font-weight: 600; }
+.message-reply-preview span, .message-reply-preview em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; }
+.reply-composer-banner {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  color: var(--text-secondary); background: var(--panel-raised); font-size: 11px; border-top: 1px solid var(--border);
+}
+.reply-composer-banner strong { color: var(--text-primary); }
+.reply-composer-banner button { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; color: var(--text-muted); background: none; cursor: pointer; }
+.reply-composer-banner button:hover { color: var(--text-primary); background: var(--hover); }
+@keyframes message-jump-flash {
+  0%, 100% { background: transparent; }
+  30% { background: var(--accent-glow); }
+}
+.message-jump-highlight { animation: message-jump-flash 1.5s ease-out; border-radius: var(--radius-sm); }
+
 /* Markdown de chat — negrito/itálico/sublinhado/tachado herdam o texto ao
    redor; código e spoiler precisam de estilo próprio. */
 .md-inline-code { padding: 1px 4px; border-radius: 3px; color: #e3a8ff; background: rgba(0, 0, 0, .3); font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px; }

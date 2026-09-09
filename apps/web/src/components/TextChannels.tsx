@@ -15,7 +15,7 @@ import { routeTextChannelInput } from '../musicCommandRouting';
 import { onRealtimeConnect, onRealtimeEvent } from '../realtime';
 import { MarkdownText } from './Markdown';
 import { MusicCard } from './MusicCard';
-import { CloseIcon, CopyIcon, EditIcon, MessageIcon, SearchIcon, SmileIcon, TrashIcon, VoiceIcon } from './Icons';
+import { CloseIcon, CopyIcon, EditIcon, MessageIcon, ReplyIcon, SearchIcon, SmileIcon, TrashIcon, VoiceIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 
@@ -226,6 +226,32 @@ function ReactionBar({
   );
 }
 
+// Só o id é guardado (ver comentário em TextMessage.replyToMessageId no
+// pacote compartilhado) — resolve contra as mensagens já carregadas nesta
+// conversa; se não achar (fora da janela de 100, ou apagada), mostra um
+// placeholder honesto em vez de fingir que tem o conteúdo.
+function ReplyPreview({
+  replyTarget,
+  onJump,
+}: {
+  replyTarget: TextMessage | undefined;
+  onJump: () => void;
+}) {
+  return (
+    <button type="button" className="message-reply-preview" onClick={onJump} disabled={!replyTarget}>
+      <ReplyIcon size={11} />
+      {replyTarget ? (
+        <>
+          <strong>{replyTarget.senderName}</strong>
+          <span>{replyTarget.text}</span>
+        </>
+      ) : (
+        <em>Mensagem original não encontrada</em>
+      )}
+    </button>
+  );
+}
+
 function HumanTextMessageRow({
   message,
   continued,
@@ -237,6 +263,9 @@ function HumanTextMessageRow({
   onSaveEdit,
   onDelete,
   onToggleReaction,
+  onReply,
+  replyTarget,
+  onJumpToMessage,
 }: {
   message: TextMessage;
   continued: boolean;
@@ -248,13 +277,16 @@ function HumanTextMessageRow({
   onSaveEdit: (text: string) => Promise<void>;
   onDelete: () => void;
   onToggleReaction: (emoji: ReactionEmoji, reacted: boolean) => void;
+  onReply: () => void;
+  replyTarget: TextMessage | undefined;
+  onJumpToMessage: (messageId: string) => void;
 }) {
   const avatarUrl = useTextAvatar(message.senderId, session);
   const initial = message.senderName.trim().charAt(0).toUpperCase() || '?';
   const isOwn = message.senderId === session.id;
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   return (
-    <article className={`message text-message ${continued ? 'continued' : ''}`}>
+    <article id={`message-${message.id}`} className={`message text-message ${continued ? 'continued' : ''}`}>
       <button
         type="button"
         className="message-avatar-trigger"
@@ -266,6 +298,9 @@ function HumanTextMessageRow({
         </span>
       </button>
       <div>
+        {message.replyToMessageId && (
+          <ReplyPreview replyTarget={replyTarget} onJump={() => onJumpToMessage(message.replyToMessageId!)} />
+        )}
         <header>
           <button type="button" className="message-name-trigger" onClick={(event) => onOpenProfile(message.senderId, event)}>
             {message.senderName}
@@ -289,6 +324,9 @@ function HumanTextMessageRow({
       </div>
       {!isEditing && (
         <div className="message-hover-actions" role="toolbar" aria-label="Ações da mensagem">
+          <button type="button" title="Responder" aria-label="Responder" onClick={onReply}>
+            <ReplyIcon size={14} />
+          </button>
           <button type="button" title="Copiar texto" aria-label="Copiar texto" onClick={() => void navigator.clipboard.writeText(message.text)}>
             <CopyIcon size={14} />
           </button>
@@ -334,6 +372,9 @@ function TextMessageRow(props: {
   onSaveEdit: (text: string) => Promise<void>;
   onDelete: () => void;
   onToggleReaction: (emoji: ReactionEmoji, reacted: boolean) => void;
+  onReply: () => void;
+  replyTarget: TextMessage | undefined;
+  onJumpToMessage: (messageId: string) => void;
 }) {
   return props.message.senderType === 'BOT'
     ? <BotTextMessageRow message={props.message} onMusicCommand={props.onMusicCommand} />
@@ -349,6 +390,9 @@ function TextMessageRow(props: {
         onSaveEdit={props.onSaveEdit}
         onDelete={props.onDelete}
         onToggleReaction={props.onToggleReaction}
+        onReply={props.onReply}
+        replyTarget={props.replyTarget}
+        onJumpToMessage={props.onJumpToMessage}
       />
     );
 }
@@ -373,8 +417,19 @@ export function TextChannelView({
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState<MusicCommandResponse | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<TextMessage | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Só destaca visualmente se a mensagem original estiver na janela já
+  // carregada (até 100 mensagens) — sem isso, não há pra onde rolar.
+  function jumpToMessage(messageId: string) {
+    const element = document.getElementById(`message-${messageId}`);
+    if (!element) return;
+    element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    element.classList.add('message-jump-highlight');
+    window.setTimeout(() => element.classList.remove('message-jump-highlight'), 1_500);
+  }
 
   async function saveMessageEdit(messageId: string, text: string) {
     try {
@@ -418,6 +473,7 @@ export function TextChannelView({
     setError('');
     setFeedback(null);
     setEditingMessageId(null);
+    setReplyingTo(null);
 
     const refresh = async () => {
       if (requestRunning) return;
@@ -483,8 +539,10 @@ export function TextChannelView({
         voiceChannelId,
         textChannelId: channel.id,
         sendMusicCommand: api.sendMusicCommand,
-        sendTextMessage: async (messageText) => (await api.sendTextMessage(channel.id, messageText)).message,
+        sendTextMessage: async (messageText) =>
+          (await api.sendTextMessage(channel.id, messageText, replyingTo?.id)).message,
       });
+      setReplyingTo(null);
       if (result.kind === 'text-message') {
         const { message } = result;
         setMessages((current) => applyIncomingMessage(current, message));
@@ -546,6 +604,12 @@ export function TextChannelView({
               onSaveEdit={(text) => saveMessageEdit(message.id, text)}
               onDelete={() => void deleteMessage(message.id)}
               onToggleReaction={(emoji, reacted) => void toggleReaction(message.id, emoji, reacted)}
+              onReply={() => {
+                setReplyingTo(message);
+                inputRef.current?.focus();
+              }}
+              replyTarget={message.replyToMessageId ? messages.find(({ id }) => id === message.replyToMessageId) : undefined}
+              onJumpToMessage={jumpToMessage}
               onMusicCommand={async (commandText) => {
                 if (!voiceChannelId) {
                   throw new Error('Você precisa estar em um canal de voz para usar os controles do SausiMusic.');
@@ -563,6 +627,15 @@ export function TextChannelView({
         })}
         <div ref={endRef} />
       </div>
+      {replyingTo && (
+        <div className="reply-composer-banner">
+          <ReplyIcon size={13} />
+          <span>Respondendo a <strong>{replyingTo.senderName}</strong></span>
+          <button type="button" aria-label="Cancelar resposta" onClick={() => setReplyingTo(null)}>
+            <CloseIcon size={13} />
+          </button>
+        </div>
+      )}
       <form className="text-channel-form" onSubmit={submitMessage}>
         <label className="sr-only" htmlFor="text-channel-message">Mensagem para #{channel.name}</label>
         <textarea

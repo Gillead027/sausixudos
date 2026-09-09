@@ -107,6 +107,10 @@ ensureColumns('users', [
 
 ensureColumns('text_messages', [
   ['edited_at', 'INTEGER'],
+  // Sem FK aqui de propósito: SQLite valida FKs só na hora de escrever,
+  // então referenciar uma mensagem que pode ter sido apagada é seguro —
+  // basta o app tratar "não encontrada" ao resolver o preview da resposta.
+  ['reply_to_message_id', 'TEXT'],
 ]);
 
 // Canais de voz eram só o env var VOICE_CHANNELS, parseado no boot (ver
