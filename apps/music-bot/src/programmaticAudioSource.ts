@@ -1,3 +1,5 @@
+import { performance } from 'node:perf_hooks';
+
 export const TEST_AUDIO_SAMPLE_RATE = 48_000;
 export const TEST_AUDIO_CHANNELS = 1;
 export const TEST_AUDIO_FRAME_DURATION_MS = 20;
@@ -41,7 +43,7 @@ export function createProgrammaticToneFrame(frameIndex: number, volume: number):
   return applyPcmGain(original, volume);
 }
 
-function waitForDuration(durationMs: number, signal: AbortSignal): Promise<boolean> {
+export function waitForDuration(durationMs: number, signal: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     if (signal.aborted) {
       resolve(false);
@@ -57,6 +59,40 @@ function waitForDuration(durationMs: number, signal: AbortSignal): Promise<boole
     };
     signal.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/**
+ * Encadear `setTimeout(20ms)` fixos acumula o overshoot da resolução do timer
+ * do SO a cada frame (no Windows, ~15.6ms de resolução típica já basta pra
+ * fazer uma faixa inteira tocar bem mais devagar que sua duração real). Este
+ * agendador ancora um horário absoluto (início + frameCount * duração) e só
+ * dorme o restante até ele, então overshoot de um frame não se propaga pros
+ * seguintes — cada frame mira seu próprio horário-alvo, não "+20ms daqui".
+ *
+ * `reset()` deve ser chamado sempre que um gap real acontecer (pause,
+ * esgotamento do jitter buffer) — sem isso, o alvo ficaria ancorado num
+ * passado distante e o próximo `wait()` tentaria "recuperar o atraso"
+ * disparando frames em rajada em vez de retomar o ritmo normal.
+ */
+export class DriftFreeFrameScheduler {
+  private anchorTime: number | null = null;
+  private framesSinceAnchor = 0;
+
+  constructor(private readonly frameDurationMs: number) {}
+
+  reset(): void {
+    this.anchorTime = null;
+    this.framesSinceAnchor = 0;
+  }
+
+  wait(signal: AbortSignal): Promise<boolean> {
+    const now = performance.now();
+    if (this.anchorTime === null) this.anchorTime = now;
+    this.framesSinceAnchor += 1;
+    const targetTime = this.anchorTime + this.framesSinceAnchor * this.frameDurationMs;
+    const delay = targetTime - now;
+    return delay > 0 ? waitForDuration(delay, signal) : Promise.resolve(!signal.aborted);
+  }
 }
 
 /**
@@ -121,10 +157,13 @@ export class ProgrammaticAudioSource {
     signal: AbortSignal,
   ): Promise<ProgrammaticAudioResult> {
     const totalFrames = TEST_AUDIO_DURATION_MS / TEST_AUDIO_FRAME_DURATION_MS;
+    const scheduler = new DriftFreeFrameScheduler(TEST_AUDIO_FRAME_DURATION_MS);
 
     while (this.frameIndex < totalFrames) {
+      const wasPaused = this.paused;
       if (!(await this.waitUntilResumed(signal))) return 'stopped';
       if (signal.aborted) return 'stopped';
+      if (wasPaused) scheduler.reset();
 
       const data = createProgrammaticToneFrame(this.frameIndex, this.volume);
       await captureFrame({
@@ -135,7 +174,7 @@ export class ProgrammaticAudioSource {
       });
       this.frameIndex += 1;
 
-      if (!(await waitForDuration(TEST_AUDIO_FRAME_DURATION_MS, signal))) return 'stopped';
+      if (!(await scheduler.wait(signal))) return 'stopped';
     }
 
     return 'finished';

@@ -202,8 +202,12 @@ export class BotVoiceParticipant implements MusicVoiceParticipant {
     if (!this.room.localParticipant) throw new Error('SausiMusic não está conectado à sala.');
     if (this.activeAudio) throw new Error('SausiMusic já possui uma track ativa nesta sala.');
 
-    // Buffer curto: mantém pause/skip/stop responsivos sem acumular ~1s do padrão do SDK.
-    const source = new AudioSource(TEST_AUDIO_SAMPLE_RATE, TEST_AUDIO_CHANNELS, 100);
+    // Buffer padrão do SDK (1000ms): dá margem real contra jitter na entrega
+    // de frames. pause()/stopAudio() já chamam source.clearQueue() logo
+    // abaixo, que descarta a fila na hora — responsividade de pause não
+    // depende de manter esse buffer artificialmente curto, e mantê-lo curto
+    // só deixava qualquer variação de timing virar gagueira audível direta.
+    const source = new AudioSource(TEST_AUDIO_SAMPLE_RATE, TEST_AUDIO_CHANNELS);
     const track = LocalAudioTrack.createAudioTrack(MUSIC_BOT_TRACK_NAME, source);
     const publishOptions = new TrackPublishOptions();
     publishOptions.source = TrackSource.SOURCE_MICROPHONE;

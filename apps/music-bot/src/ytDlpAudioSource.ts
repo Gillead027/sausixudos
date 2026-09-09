@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { PcmFrameBuffer } from './ffmpegAudioSource.js';
+import { PcmJitterBuffer } from './pcmJitterBuffer.js';
 import {
+  DriftFreeFrameScheduler,
   TEST_AUDIO_CHANNELS,
   TEST_AUDIO_FRAME_DURATION_MS,
   TEST_AUDIO_SAMPLE_RATE,
@@ -9,6 +11,13 @@ import {
   type ProgrammaticAudioResult,
   type ProgrammaticPcmFrame,
 } from './programmaticAudioSource.js';
+
+// yt-dlp faz requisições HTTP reais pra CDNs de vídeo — a fonte de jitter mais
+// séria do pipeline inteiro. 2s de prebuffer dá margem real contra variação de
+// latência/largura de banda; 10s de teto evita crescimento de memória sem
+// limite quando a rede está bem mais rápida que tempo real (o caso comum).
+const PREBUFFER_MS = 2_000;
+const MAX_BUFFER_MS = 10_000;
 
 interface YtDlpAudioSourceOptions {
   webUrl: string;
@@ -26,15 +35,6 @@ function killProcess(child: ChildProcess | null): void {
 function bounded(current: string, chunk: Buffer, limit = 8_192): string {
   if (current.length >= limit) return current;
   return current + chunk.toString('utf8').slice(0, limit - current.length);
-}
-
-function waitFrameDuration(signal: AbortSignal): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (signal.aborted) return resolve(false);
-    const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(true); }, TEST_AUDIO_FRAME_DURATION_MS);
-    const onAbort = () => { clearTimeout(timer); resolve(false); };
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 export class YtDlpAudioSource {
@@ -155,24 +155,50 @@ export class YtDlpAudioSource {
     const onAbort = () => this.stopChildren();
     signal.addEventListener('abort', onAbort, { once: true });
 
-    const frames = new PcmFrameBuffer();
-    try {
-      for await (const chunk of ffmpeg.stdout) {
-        for (const rawFrame of frames.push(chunk as Uint8Array)) {
-          if (!(await this.waitUntilResumed(signal))) return 'stopped';
-          if (signal.aborted) return 'stopped';
-          await captureFrame({
-            data: applyPcmGain(rawFrame, this.volume),
-            sampleRate: TEST_AUDIO_SAMPLE_RATE,
-            channels: TEST_AUDIO_CHANNELS,
-            samplesPerChannel: TEST_AUDIO_SAMPLES_PER_CHANNEL,
-          });
-          this.frameIndex += 1;
-          // O relógio do bot é explícito: evita bursts do FFmpeg e mantém pause responsivo.
-          if (!(await waitFrameDuration(signal))) return 'stopped';
+    // yt-dlp -> ffmpeg produzem o quanto a rede/CPU derem conta — o jitter
+    // buffer absorve essa variação, e só o consumidor abaixo marca o ritmo
+    // real de reprodução (20ms/frame), em vez de acoplar os dois direto.
+    const jitterBuffer = new PcmJitterBuffer({ prebufferMs: PREBUFFER_MS, maxBufferMs: MAX_BUFFER_MS });
+    const producer = (async () => {
+      const frames = new PcmFrameBuffer();
+      try {
+        for await (const chunk of ffmpeg.stdout) {
+          for (const rawFrame of frames.push(chunk as Uint8Array)) {
+            if (!(await jitterBuffer.push(rawFrame, signal))) return;
+          }
         }
+      } finally {
+        jitterBuffer.end();
+      }
+    })();
+
+    const scheduler = new DriftFreeFrameScheduler(TEST_AUDIO_FRAME_DURATION_MS);
+    try {
+      if (!(await jitterBuffer.waitForPrebuffer(signal))) return 'stopped';
+
+      while (true) {
+        const wasPaused = this.paused;
+        if (!(await this.waitUntilResumed(signal))) return 'stopped';
+        if (signal.aborted) return 'stopped';
+
+        const hadBufferedFrame = jitterBuffer.bufferedMs > 0;
+        if (!(await jitterBuffer.waitForFrame(signal))) break;
+        const rawFrame = jitterBuffer.shift();
+        if (!rawFrame) break;
+        if (wasPaused || !hadBufferedFrame) scheduler.reset();
+
+        await captureFrame({
+          data: applyPcmGain(rawFrame, this.volume),
+          sampleRate: TEST_AUDIO_SAMPLE_RATE,
+          channels: TEST_AUDIO_CHANNELS,
+          samplesPerChannel: TEST_AUDIO_SAMPLES_PER_CHANNEL,
+        });
+        this.frameIndex += 1;
+
+        if (!(await scheduler.wait(signal))) return 'stopped';
       }
 
+      await producer;
       const [ffmpegCode, ytdlpCode] = await Promise.all([ffmpegExit, ytdlpExit]);
       if (signal.aborted) return 'stopped';
       if (ytdlpCode !== 0) throw new Error(`yt-dlp encerrou com código ${ytdlpCode}${ytdlpErr.trim() ? `: ${ytdlpErr.trim()}` : ''}`);
@@ -181,6 +207,7 @@ export class YtDlpAudioSource {
     } finally {
       signal.removeEventListener('abort', onAbort);
       this.stopChildren();
+      jitterBuffer.releaseAll();
       this.ytdlp = null;
       this.ffmpeg = null;
       this.resume();

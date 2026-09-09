@@ -2,7 +2,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PcmJitterBuffer } from './pcmJitterBuffer.js';
 import {
+  DriftFreeFrameScheduler,
   TEST_AUDIO_CHANNELS,
   TEST_AUDIO_FRAME_DURATION_MS,
   TEST_AUDIO_SAMPLE_RATE,
@@ -11,6 +13,13 @@ import {
   type ProgrammaticAudioResult,
   type ProgrammaticPcmFrame,
 } from './programmaticAudioSource.js';
+
+// 1.5s de prebuffer antes de começar a tocar, até 8s de fila em memória — dá
+// margem real pra absorver variações de I/O/decodificação sem gaguejar,
+// sem deixar a fila crescer sem limite quando o disco/CPU decodifica bem
+// mais rápido que o tempo real de reprodução (o caso comum).
+const PREBUFFER_MS = 1_500;
+const MAX_BUFFER_MS = 8_000;
 
 export const PCM_FRAME_BYTES = TEST_AUDIO_SAMPLES_PER_CHANNEL * 2;
 export const DIAGNOSTIC_AUDIO_DURATION_MS = 12_000;
@@ -148,7 +157,9 @@ export class FfmpegAudioSource {
       [
         '-hide_banner',
         '-loglevel', 'error',
-        '-re',
+        // Sem '-re': decodifica o quanto antes, sem travar a leitura na taxa
+        // de reprodução — isso é papel do PcmJitterBuffer/pacing abaixo, que
+        // dá margem real contra jitter de I/O em vez de zero folga alguma.
         '-i', this.inputPath,
         '-vn',
         '-f', 's16le',
@@ -172,24 +183,54 @@ export class FfmpegAudioSource {
     signal.addEventListener('abort', onAbort, { once: true });
     const stdout = child.stdout;
     if (!stdout) throw new Error('FFmpeg não forneceu stdout de áudio.');
-    const frames = new PcmFrameBuffer();
-    try {
-      for await (const chunk of stdout) {
-        for (const rawFrame of frames.push(chunk as Uint8Array)) {
-          if (!(await waitForResume(() => this.paused, this.resumeWaiters, signal))) {
-            return 'stopped';
+
+    const jitterBuffer = new PcmJitterBuffer({ prebufferMs: PREBUFFER_MS, maxBufferMs: MAX_BUFFER_MS });
+    const producer = (async () => {
+      const frames = new PcmFrameBuffer();
+      try {
+        for await (const chunk of stdout) {
+          for (const rawFrame of frames.push(chunk as Uint8Array)) {
+            if (!(await jitterBuffer.push(rawFrame, signal))) return;
           }
-          if (signal.aborted) return 'stopped';
-          await captureFrame({
-            data: applyPcmGain(rawFrame, this.volume),
-            sampleRate: TEST_AUDIO_SAMPLE_RATE,
-            channels: TEST_AUDIO_CHANNELS,
-            samplesPerChannel: TEST_AUDIO_SAMPLES_PER_CHANNEL,
-          });
-          this.frameIndex += 1;
         }
+      } finally {
+        jitterBuffer.end();
+      }
+    })();
+
+    const scheduler = new DriftFreeFrameScheduler(TEST_AUDIO_FRAME_DURATION_MS);
+    try {
+      if (!(await jitterBuffer.waitForPrebuffer(signal))) return 'stopped';
+
+      while (true) {
+        const wasPaused = this.paused;
+        if (!(await waitForResume(() => this.paused, this.resumeWaiters, signal))) return 'stopped';
+        if (signal.aborted) return 'stopped';
+
+        const hadBufferedFrame = jitterBuffer.bufferedMs > 0;
+        if (!(await jitterBuffer.waitForFrame(signal))) break;
+        const rawFrame = jitterBuffer.shift();
+        if (!rawFrame) break;
+        // Gap real (pause ou esgotamento do buffer): reancora o agendador em
+        // vez de deixar o alvo no passado, o que causaria rajada de frames.
+        if (wasPaused || !hadBufferedFrame) scheduler.reset();
+
+        await captureFrame({
+          data: applyPcmGain(rawFrame, this.volume),
+          sampleRate: TEST_AUDIO_SAMPLE_RATE,
+          channels: TEST_AUDIO_CHANNELS,
+          samplesPerChannel: TEST_AUDIO_SAMPLES_PER_CHANNEL,
+        });
+        this.frameIndex += 1;
+
+        // Pacing de reprodução de verdade mora aqui — depois de consumir do
+        // buffer, não na leitura do processo externo. Agendamento por horário
+        // absoluto evita que o overshoot do timer de um frame se acumule nos
+        // seguintes (ver DriftFreeFrameScheduler).
+        if (!(await scheduler.wait(signal))) return 'stopped';
       }
 
+      await producer;
       const code = await exit;
       if (signal.aborted) return 'stopped';
       if (code !== 0) {
@@ -199,6 +240,7 @@ export class FfmpegAudioSource {
     } finally {
       signal.removeEventListener('abort', onAbort);
       if (signal.aborted) this.terminateChild();
+      jitterBuffer.releaseAll();
       this.child = null;
       this.resume();
     }
