@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { DEFAULT_EVERYONE_PERMISSIONS, EVERYONE_ROLE_ID, Permission } from '@sausixudos/shared';
 import { config } from './config.js';
 
 mkdirSync(dirname(config.DB_PATH), { recursive: true });
@@ -79,6 +81,30 @@ db.exec(`
     created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS roles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    color TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    hoist INTEGER NOT NULL DEFAULT 0,
+    permissions INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS user_roles (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, role_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS bans (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL DEFAULT '',
+    banned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // O SausiMusic mantém um único player persistente por canal de texto. Limpa
@@ -113,6 +139,7 @@ ensureColumns('users', [
   ['pronouns', "TEXT NOT NULL DEFAULT ''"],
   ['avatar_data_url', "TEXT NOT NULL DEFAULT ''"],
   ['banner_data_url', "TEXT NOT NULL DEFAULT ''"],
+  ['timeout_until', 'INTEGER'],
 ]);
 
 ensureColumns('text_messages', [
@@ -138,4 +165,37 @@ if (voiceChannelCount === 0) {
   config.channels.forEach((channel, index) => {
     insertVoiceChannel.run(channel.id, channel.name, channel.description, index, seededAt);
   });
+}
+
+// Cargos não existiam antes — semeia só na primeira vez que este código roda
+// contra um banco existente (tabela `roles` vazia), preservando qualquer
+// atribuição futura feita pela própria aplicação. O cargo "@everyone" recebe
+// exatamente as permissões que todo mundo já tinha antes de cargos existirem
+// (ver DEFAULT_EVERYONE_PERMISSIONS em packages/shared), então nenhum
+// usuário perde capacidade nenhuma com esta migração. A conta mais antiga
+// (menor created_at) vira Administrador automaticamente — sem isso o sistema
+// de permissões nasceria sem ninguém capaz de gerenciar cargos/moderação.
+const roleCount = (db.prepare('SELECT COUNT(*) AS count FROM roles').get() as { count: number }).count;
+if (roleCount === 0) {
+  const seededAt = Date.now();
+  db.prepare(
+    'INSERT INTO roles (id, name, color, position, hoist, permissions, created_at) VALUES (?, ?, ?, 0, 0, ?, ?)',
+  ).run(EVERYONE_ROLE_ID, '@everyone', '#8a91a6', DEFAULT_EVERYONE_PERMISSIONS, seededAt);
+
+  const insertUserRole = db.prepare(
+    'INSERT OR IGNORE INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)',
+  );
+  const allUsers = db.prepare('SELECT id, created_at FROM users').all() as { id: string; created_at: number }[];
+  for (const user of allUsers) {
+    insertUserRole.run(user.id, EVERYONE_ROLE_ID, seededAt);
+  }
+
+  if (allUsers.length > 0) {
+    const owner = allUsers.reduce((oldest, user) => (user.created_at < oldest.created_at ? user : oldest));
+    const adminRoleId = randomUUID();
+    db.prepare(
+      'INSERT INTO roles (id, name, color, position, hoist, permissions, created_at) VALUES (?, ?, ?, 100, 1, ?, ?)',
+    ).run(adminRoleId, 'Administrador', '#ee7798', Permission.ADMINISTRATOR, seededAt);
+    insertUserRole.run(owner.id, adminRoleId, seededAt);
+  }
 }

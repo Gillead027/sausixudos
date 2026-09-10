@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/musicCommands.test.ts src/voiceModeration.test.ts src/musicThumbnails.test.ts src/session.test.ts",
+    "test": "node --import tsx --test src/musicCommands.test.ts src/voiceModeration.test.ts src/musicThumbnails.test.ts src/session.test.ts src/moderation.test.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {

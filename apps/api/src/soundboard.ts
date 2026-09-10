@@ -33,6 +33,7 @@ const insertSoundStatement = db.prepare(
   'INSERT INTO soundboard_sounds (id, name, emoji, audio_data_url, duration_ms, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
 );
 const deleteSoundStatement = db.prepare('DELETE FROM soundboard_sounds WHERE id = ? AND created_by = ?');
+const deleteSoundAsModeratorStatement = db.prepare('DELETE FROM soundboard_sounds WHERE id = ?');
 
 function toSound(row: SoundboardSoundRow): SoundboardSound {
   return {
@@ -77,8 +78,10 @@ export function createSoundboardSound(
   return sound;
 }
 
-// Sem cargos ainda (ver DISCORD_PARITY_PLAN.md) — só quem subiu o som pode
-// apagá-lo, mesmo padrão de mensagens de texto.
-export function deleteSoundboardSound(id: string, requesterId: string): boolean {
+// canManageSoundboard vem da permissão MANAGE_SOUNDBOARD do cargo do
+// requisitante (ver roles.ts) — permite apagar som enviado por outra pessoa,
+// além do autor sempre poder apagar o próprio.
+export function deleteSoundboardSound(id: string, requesterId: string, canManageSoundboard: boolean): boolean {
+  if (canManageSoundboard) return deleteSoundAsModeratorStatement.run(id).changes > 0;
   return deleteSoundStatement.run(id, requesterId).changes > 0;
 }

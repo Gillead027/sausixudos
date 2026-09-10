@@ -420,6 +420,7 @@ export function TextChannelView({
   const [replyingTo, setReplyingTo] = useState<TextMessage | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const isTimedOut = Boolean(session.timeoutUntil && session.timeoutUntil > Date.now());
 
   // Só destaca visualmente se a mensagem original estiver na janela já
   // carregada (até 100 mensagens) — sem isso, não há pra onde rolar.
@@ -636,6 +637,14 @@ export function TextChannelView({
           </button>
         </div>
       )}
+      {isTimedOut && session.timeoutUntil && (
+        <div className="reply-composer-banner timeout-composer-banner">
+          <span>
+            Você está em timeout e não pode enviar mensagens até{' '}
+            {new Date(session.timeoutUntil).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}.
+          </span>
+        </div>
+      )}
       <form className="text-channel-form" onSubmit={submitMessage}>
         <label className="sr-only" htmlFor="text-channel-message">Mensagem para #{channel.name}</label>
         <textarea
@@ -644,6 +653,7 @@ export function TextChannelView({
           rows={1}
           maxLength={CHAT_MESSAGE_MAX_LENGTH}
           value={draft}
+          disabled={isTimedOut}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -651,11 +661,11 @@ export function TextChannelView({
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          placeholder={`Conversar em #${channel.name}`}
+          placeholder={isTimedOut ? 'Você está em timeout' : `Conversar em #${channel.name}`}
         />
         <div className="text-channel-form-meta">
           <span>{draft.length}/{CHAT_MESSAGE_MAX_LENGTH}</span>
-          <button type="submit" disabled={sending || !draft.trim()}>
+          <button type="submit" disabled={isTimedOut || sending || !draft.trim()}>
             {sending ? 'Enviando…' : 'Enviar'}
           </button>
         </div>

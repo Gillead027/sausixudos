@@ -1,9 +1,12 @@
 import type {
   AccentColor,
+  BanRecord,
   LiveKitTokenResponse,
+  MemberSummary,
   MusicCommandResponse,
   PublicConfig,
   ReactionEmoji,
+  Role,
   RoomSummary,
   SoundboardSound,
   TextChannel,
@@ -126,4 +129,37 @@ export const api = {
     }),
   deleteSoundboardSound: (soundId: string) =>
     request<void>(`/api/soundboard/${encodeURIComponent(soundId)}`, { method: 'DELETE' }),
+  getRoles: () => request<{ roles: Role[] }>('/api/roles'),
+  createRole: (name: string, color: string, permissions: number, hoist: boolean) =>
+    request<{ role: Role }>('/api/roles', {
+      method: 'POST',
+      body: JSON.stringify({ name, color, permissions, hoist }),
+    }),
+  updateRole: (roleId: string, patch: { name?: string; color?: string; permissions?: number; hoist?: boolean }) =>
+    request<{ role: Role }>(`/api/roles/${encodeURIComponent(roleId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteRole: (roleId: string) => request<void>(`/api/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' }),
+  assignRole: (roleId: string, userId: string) =>
+    request<void>(`/api/roles/${encodeURIComponent(roleId)}/members/${encodeURIComponent(userId)}`, { method: 'PUT' }),
+  unassignRole: (roleId: string, userId: string) =>
+    request<void>(`/api/roles/${encodeURIComponent(roleId)}/members/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    }),
+  getMembers: () => request<{ members: MemberSummary[] }>('/api/members'),
+  timeoutMember: (userId: string, minutes: number) =>
+    request<{ timeoutUntil: number }>('/api/moderation/timeout', {
+      method: 'POST',
+      body: JSON.stringify({ userId, minutes }),
+    }),
+  clearMemberTimeout: (userId: string) =>
+    request<void>(`/api/moderation/timeout/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+  getBans: () => request<{ bans: BanRecord[] }>('/api/moderation/bans'),
+  banMember: (userId: string, reason: string) =>
+    request<void>('/api/moderation/bans', { method: 'POST', body: JSON.stringify({ userId, reason }) }),
+  unbanMember: (userId: string) =>
+    request<void>(`/api/moderation/bans/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+  voiceKickMember: (userId: string) =>
+    request<void>('/api/moderation/voice-kick', { method: 'POST', body: JSON.stringify({ userId }) }),
 };

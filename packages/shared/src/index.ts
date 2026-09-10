@@ -19,6 +19,113 @@ export const MUSIC_PLAY_INPUT_MAX_LENGTH = 300;
 export const SOUNDBOARD_NAME_MAX_LENGTH = 32;
 export const SOUNDBOARD_AUDIO_DATA_URL_MAX_LENGTH = 600_000;
 export const SOUNDBOARD_MAX_DURATION_MS = 5_500;
+export const ROLE_NAME_MAX_LENGTH = 32;
+export const BAN_REASON_MAX_LENGTH = 300;
+export const TIMEOUT_MAX_MINUTES = 10_080; // 7 dias, mesmo teto do Discord real.
+
+// Cargo automático que todo usuário registrado recebe (não aparece como
+// atribuível manualmente — ver roles.ts). Posição fixa em 0: é sempre o
+// cargo de menor hierarquia, nunca pode ser apagado nem reordenado.
+export const EVERYONE_ROLE_ID = 'everyone';
+
+// Bitfield de permissões — reduzido (sem herança complexa de categorias/canal
+// por permissão, ver DISCORD_PARITY_PLAN.md), mas real: cada flag é checada
+// de verdade no backend em apps/api/src/index.ts, não é decorativo.
+export const Permission = {
+  VIEW_CHANNELS: 1 << 0,
+  MANAGE_CHANNELS: 1 << 1,
+  MANAGE_ROLES: 1 << 2,
+  SEND_MESSAGES: 1 << 3,
+  MANAGE_MESSAGES: 1 << 4,
+  CONNECT: 1 << 5,
+  SPEAK: 1 << 6,
+  VIDEO: 1 << 7,
+  USE_SOUNDBOARD: 1 << 8,
+  MANAGE_SOUNDBOARD: 1 << 9,
+  KICK_MEMBERS: 1 << 10,
+  BAN_MEMBERS: 1 << 11,
+  MODERATE_MEMBERS: 1 << 12,
+  ADMINISTRATOR: 1 << 13,
+} as const;
+
+export type PermissionFlag = (typeof Permission)[keyof typeof Permission];
+
+// O que todo mundo já podia fazer antes de cargos existirem — preserva o
+// comportamento atual de produção (qualquer um cria canal, manda mensagem,
+// entra em voz, usa o soundboard) sem exigir nenhuma ação do admin depois da
+// migração. Kick/ban/timeout/gerenciar cargos/mensagens/soundboard de outros
+// continuam exigindo um cargo elevado, porque não existiam antes.
+export const DEFAULT_EVERYONE_PERMISSIONS =
+  Permission.VIEW_CHANNELS |
+  Permission.MANAGE_CHANNELS |
+  Permission.SEND_MESSAGES |
+  Permission.CONNECT |
+  Permission.SPEAK |
+  Permission.VIDEO |
+  Permission.USE_SOUNDBOARD;
+
+export function hasPermission(bitfield: number, flag: number): boolean {
+  return (bitfield & Permission.ADMINISTRATOR) !== 0 || (bitfield & flag) !== 0;
+}
+
+export function combinePermissions(...bitfields: number[]): number {
+  return bitfields.reduce((combined, value) => combined | value, 0);
+}
+
+export interface PermissionDefinition {
+  flag: number;
+  category: 'Geral' | 'Texto' | 'Voz' | 'Moderação';
+  label: string;
+  description: string;
+}
+
+// Alimenta tanto a validação quanto a lista de checkboxes da UI de cargos
+// (ver ServerSettings.tsx) — uma única fonte de verdade, sem duplicar rótulos.
+export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
+  { flag: Permission.ADMINISTRATOR, category: 'Geral', label: 'Administrador', description: 'Concede todas as permissões, ignorando as demais.' },
+  { flag: Permission.VIEW_CHANNELS, category: 'Geral', label: 'Ver canais', description: 'Ver os canais de texto e voz do servidor.' },
+  { flag: Permission.MANAGE_CHANNELS, category: 'Geral', label: 'Gerenciar canais', description: 'Criar e apagar canais de texto e voz.' },
+  { flag: Permission.MANAGE_ROLES, category: 'Geral', label: 'Gerenciar cargos', description: 'Criar, editar, apagar e atribuir cargos com posição menor que a sua.' },
+  { flag: Permission.SEND_MESSAGES, category: 'Texto', label: 'Enviar mensagens', description: 'Enviar mensagens nos canais de texto.' },
+  { flag: Permission.MANAGE_MESSAGES, category: 'Texto', label: 'Gerenciar mensagens', description: 'Apagar mensagens enviadas por outros membros.' },
+  { flag: Permission.CONNECT, category: 'Voz', label: 'Conectar', description: 'Entrar em canais de voz.' },
+  { flag: Permission.SPEAK, category: 'Voz', label: 'Falar', description: 'Transmitir áudio em canais de voz.' },
+  { flag: Permission.VIDEO, category: 'Voz', label: 'Transmitir vídeo', description: 'Ativar câmera e compartilhar tela.' },
+  { flag: Permission.USE_SOUNDBOARD, category: 'Voz', label: 'Usar soundboard', description: 'Tocar sons do soundboard durante uma chamada.' },
+  { flag: Permission.MANAGE_SOUNDBOARD, category: 'Voz', label: 'Gerenciar soundboard', description: 'Apagar sons enviados por outros membros.' },
+  { flag: Permission.KICK_MEMBERS, category: 'Moderação', label: 'Expulsar membros', description: 'Desconectar um membro de qualquer canal de voz, mesmo sem estar na mesma chamada.' },
+  { flag: Permission.MODERATE_MEMBERS, category: 'Moderação', label: 'Silenciar membros (timeout)', description: 'Impedir temporariamente que um membro envie mensagens, reaja, use o soundboard ou entre em canais de voz.' },
+  { flag: Permission.BAN_MEMBERS, category: 'Moderação', label: 'Banir membros', description: 'Impedir que um membro volte a acessar o servidor.' },
+];
+
+export interface Role {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  hoist: boolean;
+  permissions: number;
+  createdAt: number;
+}
+
+export interface MemberSummary {
+  id: string;
+  displayName: string;
+  accentColor: AccentColor;
+  avatarUrl: string;
+  statusText: string;
+  roleIds: string[];
+  timeoutUntil: number | null;
+}
+
+export interface BanRecord {
+  userId: string;
+  displayName: string;
+  reason: string;
+  bannedBy: string | null;
+  bannedByName: string | null;
+  createdAt: number;
+}
 
 export const ACCENT_COLORS = [
   '#4e7960',
@@ -42,6 +149,9 @@ export interface UserSession {
   pronouns: string;
   avatarUrl: string;
   bannerUrl: string;
+  roleIds: string[];
+  permissions: number;
+  timeoutUntil: number | null;
 }
 
 export interface VoiceChannel {
@@ -448,4 +558,11 @@ export type RealtimeEvent =
   | { type: 'TEXT_MESSAGE_REACTION_ADD'; channelId: string; messageId: string; emoji: ReactionEmoji; userId: string }
   | { type: 'TEXT_MESSAGE_REACTION_REMOVE'; channelId: string; messageId: string; emoji: ReactionEmoji; userId: string }
   | { type: 'SOUNDBOARD_SOUND_CREATE'; sound: SoundboardSound }
-  | { type: 'SOUNDBOARD_SOUND_DELETE'; soundId: string };
+  | { type: 'SOUNDBOARD_SOUND_DELETE'; soundId: string }
+  | { type: 'ROLE_CREATE'; role: Role }
+  | { type: 'ROLE_UPDATE'; role: Role }
+  | { type: 'ROLE_DELETE'; roleId: string }
+  | { type: 'MEMBER_ROLES_UPDATE'; userId: string; roleIds: string[] }
+  | { type: 'MEMBER_TIMEOUT_UPDATE'; userId: string; timeoutUntil: number | null }
+  | { type: 'MEMBER_BANNED'; userId: string }
+  | { type: 'MEMBER_UNBANNED'; userId: string };

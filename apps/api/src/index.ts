@@ -8,20 +8,26 @@ import {
   ACCENT_COLORS,
   MUSIC_BOT_IDENTITY,
   AVATAR_DATA_URL_MAX_LENGTH,
+  BAN_REASON_MAX_LENGTH,
   BANNER_DATA_URL_MAX_LENGTH,
   BIO_MAX_LENGTH,
   CHAT_MESSAGE_MAX_LENGTH,
   DISPLAY_NAME_MAX_LENGTH,
   DISPLAY_NAME_MIN_LENGTH,
+  EVERYONE_ROLE_ID,
+  hasPermission,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  Permission,
   PRONOUNS_MAX_LENGTH,
+  ROLE_NAME_MAX_LENGTH,
   SOUNDBOARD_AUDIO_DATA_URL_MAX_LENGTH,
   SOUNDBOARD_MAX_DURATION_MS,
   SOUNDBOARD_NAME_MAX_LENGTH,
   STATUS_TEXT_MAX_LENGTH,
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
+  TIMEOUT_MAX_MINUTES,
   type LiveKitTokenResponse,
   parseParticipantMetadata,
   type HumanParticipantMetadata,
@@ -40,7 +46,15 @@ import {
   inviteMatches,
   setSessionCookie,
 } from './session.js';
-import { createUser, getUserById, getUserByUsername, updateUserProfile, verifyPassword, type UserRecord } from './users.js';
+import {
+  createUser,
+  getUserById,
+  getUserByUsername,
+  setUserTimeout,
+  updateUserProfile,
+  verifyPassword,
+  type UserRecord,
+} from './users.js';
 import {
   deleteMusicBotTextMessage,
   deleteMusicBotTextMessagesForVoiceChannel,
@@ -61,7 +75,7 @@ import { addReaction, isValidReactionEmoji, removeReaction } from './reactions.j
 import { authorizeMusicCommand } from './musicCommands.js';
 import { fetchMusicThumbnail } from './musicThumbnails.js';
 import { authorizeVoiceDisconnect } from './voiceModeration.js';
-import { attachRealtime, broadcast } from './realtime.js';
+import { attachRealtime, broadcast, disconnectUser } from './realtime.js';
 import {
   createVoiceChannel,
   deleteVoiceChannel,
@@ -70,6 +84,22 @@ import {
   listVoiceChannels,
 } from './voiceChannels.js';
 import { createSoundboardSound, deleteSoundboardSound, getSoundboardSoundById, listSoundboardSounds } from './soundboard.js';
+import {
+  assignDefaultRole,
+  assignRole,
+  createRole,
+  deleteRole,
+  getRoleById,
+  getRoleByName,
+  getUserHighestPosition,
+  getUserPermissionBitfield,
+  getUserRoleIds,
+  listMembers,
+  listRoles,
+  unassignRole,
+  updateRole,
+} from './roles.js';
+import { authorizeModerationAction, banUser, isBanned, listBans, unbanUser } from './moderation.js';
 
 const app = express();
 const roomService = new RoomServiceClient(
@@ -120,6 +150,22 @@ const channelCreateLimiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { error: 'Limite de criação de canais atingido. Tente novamente mais tarde.' },
+});
+
+const roleLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Limite de alterações de cargo atingido. Tente novamente mais tarde.' },
+});
+
+const moderationLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Muitas ações de moderação em pouco tempo.' },
 });
 
 const usernameSchema = z
@@ -199,6 +245,36 @@ const reactionSchema = z.object({
   emoji: z.string().refine(isValidReactionEmoji, 'Emoji não suportado.'),
 });
 
+const ALL_PERMISSIONS_MASK = Object.values(Permission).reduce((mask, flag) => mask | flag, 0);
+const permissionsBitfieldSchema = z.number().int().min(0).max(ALL_PERMISSIONS_MASK);
+const roleColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Cor inválida.');
+
+const roleCreateSchema = z.object({
+  name: z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH),
+  color: roleColorSchema,
+  permissions: permissionsBitfieldSchema,
+  hoist: z.boolean().default(false),
+});
+
+const roleUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(ROLE_NAME_MAX_LENGTH).optional(),
+  color: roleColorSchema.optional(),
+  permissions: permissionsBitfieldSchema.optional(),
+  hoist: z.boolean().optional(),
+});
+
+const timeoutSchema = z.object({
+  userId: z.string().min(1),
+  minutes: z.number().int().min(1).max(TIMEOUT_MAX_MINUTES),
+});
+
+const banSchema = z.object({
+  userId: z.string().min(1),
+  reason: z.string().trim().max(BAN_REASON_MAX_LENGTH).default(''),
+});
+
+const voiceKickSchema = z.object({ userId: z.string().min(1) });
+
 function requireSession(request: Request, response: Response, next: NextFunction): void {
   const identity = getSession(request);
   if (!identity) {
@@ -210,12 +286,69 @@ function requireSession(request: Request, response: Response, next: NextFunction
     response.status(401).json({ error: 'Sessão inválida.' });
     return;
   }
+  // Checado a cada requisição (não só no login) porque a sessão é um cookie
+  // stateless de até 12h — sem isso, um usuário banido continuaria com
+  // acesso completo até o cookie expirar sozinho.
+  if (isBanned(user.id)) {
+    clearSessionCookie(response);
+    response.status(403).json({ error: 'Sua conta foi banida deste servidor.' });
+    return;
+  }
   response.locals.user = user;
   next();
 }
 
 function currentUser(response: Response): UserRecord {
   return response.locals.user as UserRecord;
+}
+
+function requirePermission(flag: number) {
+  return (_request: Request, response: Response, next: NextFunction): void => {
+    const user = currentUser(response);
+    if (!hasPermission(getUserPermissionBitfield(user.id), flag)) {
+      response.status(403).json({ error: 'Você não tem permissão para fazer isso.' });
+      return;
+    }
+    next();
+  };
+}
+
+function activeTimeoutRemainingMs(user: UserRecord): number {
+  return user.timeoutUntil && user.timeoutUntil > Date.now() ? user.timeoutUntil - Date.now() : 0;
+}
+
+function rejectIfTimedOut(user: UserRecord, response: Response): boolean {
+  const remaining = activeTimeoutRemainingMs(user);
+  if (remaining <= 0) return false;
+  const minutes = Math.ceil(remaining / 60_000);
+  response.status(403).json({ error: `Você está em timeout por mais ${minutes} minuto(s).` });
+  return true;
+}
+
+// Usado tanto pra "expulsar da voz" (KICK_MEMBERS) quanto pra forçar
+// desconexão ao aplicar ban/timeout — procura em qual canal de voz (se
+// algum) o usuário está agora, já que não guardamos esse estado localmente
+// (a fonte da verdade é sempre o LiveKit).
+async function findActiveRoomIdForUser(userId: string): Promise<string | null> {
+  for (const channel of listVoiceChannels()) {
+    try {
+      const participants = await roomService.listParticipants(channel.id);
+      if (participants.some((participant) => participant.identity === userId)) return channel.id;
+    } catch {
+      // Sala sem participantes ainda não existe no LiveKit — não é erro.
+    }
+  }
+  return null;
+}
+
+async function forceDisconnectFromVoice(userId: string): Promise<void> {
+  const roomId = await findActiveRoomIdForUser(userId);
+  if (!roomId) return;
+  try {
+    await roomService.removeParticipant(roomId, userId);
+  } catch (error) {
+    console.error(`Falha ao forçar desconexão de voz de ${userId}:`, error);
+  }
 }
 
 // Chamada tanto na abertura de um canal (fetch inicial) quanto por um laço
@@ -260,6 +393,9 @@ function toUserSession(user: UserRecord): UserSession {
     pronouns: user.pronouns,
     avatarUrl: user.avatarDataUrl,
     bannerUrl: user.bannerDataUrl,
+    roleIds: getUserRoleIds(user.id),
+    permissions: getUserPermissionBitfield(user.id),
+    timeoutUntil: user.timeoutUntil,
   };
 }
 
@@ -286,6 +422,7 @@ app.post('/api/auth/register', authLimiter, (request, response) => {
   }
 
   const user = createUser(username, body.data.password, body.data.accentColor);
+  assignDefaultRole(user.id);
   const session = createSession(user.id, user.username);
   setSessionCookie(response, session);
   response.status(201).json({ user: toUserSession(user) });
@@ -301,6 +438,10 @@ app.post('/api/auth/login', authLimiter, (request, response) => {
   const user = getUserByUsername(body.data.username);
   if (!user || !verifyPassword(user, body.data.password)) {
     response.status(401).json({ error: 'Usuário ou senha inválidos.' });
+    return;
+  }
+  if (isBanned(user.id)) {
+    response.status(403).json({ error: 'Sua conta foi banida deste servidor.' });
     return;
   }
 
@@ -398,7 +539,7 @@ app.get('/api/text-channels', requireSession, (_request, response) => {
   response.json({ channels: listTextChannels() });
 });
 
-app.post('/api/text-channels', requireSession, channelCreateLimiter, (request, response) => {
+app.post('/api/text-channels', requireSession, requirePermission(Permission.MANAGE_CHANNELS), channelCreateLimiter, (request, response) => {
   const body = channelSchema.safeParse(request.body);
   if (!body.success) {
     response.status(400).json({ error: 'Informe um nome de canal válido.' });
@@ -453,6 +594,7 @@ app.post(
       response.status(404).json({ error: 'Mensagem original não encontrada.' });
       return;
     }
+    if (rejectIfTimedOut(currentUser(response), response)) return;
 
     const message = createTextMessage(channelId, body.data.text, currentUser(response), body.data.replyToMessageId);
     broadcast({ type: 'TEXT_MESSAGE_CREATE', channelId, message });
@@ -499,7 +641,9 @@ app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, 
     return;
   }
 
-  const result = deleteTextMessage(channelId, messageId, currentUser(response).id);
+  const user = currentUser(response);
+  const canManageMessages = hasPermission(getUserPermissionBitfield(user.id), Permission.MANAGE_MESSAGES);
+  const result = deleteTextMessage(channelId, messageId, user.id, canManageMessages);
   if (!result.ok) {
     if (result.reason === 'FORBIDDEN') {
       response.status(403).json({ error: 'Você só pode apagar suas próprias mensagens.' });
@@ -533,6 +677,7 @@ app.post(
       response.status(400).json({ error: 'Emoji não suportado.' });
       return;
     }
+    if (rejectIfTimedOut(currentUser(response), response)) return;
 
     const userId = currentUser(response).id;
     addReaction(messageId, body.data.emoji, userId);
@@ -614,7 +759,7 @@ app.get('/api/rooms', requireSession, async (_request, response) => {
   }
 });
 
-app.post('/api/voice-channels', requireSession, channelCreateLimiter, (request, response) => {
+app.post('/api/voice-channels', requireSession, requirePermission(Permission.MANAGE_CHANNELS), channelCreateLimiter, (request, response) => {
   const body = channelSchema.safeParse(request.body);
   if (!body.success) {
     response.status(400).json({ error: 'Informe um nome de canal válido.' });
@@ -636,7 +781,7 @@ app.post('/api/voice-channels', requireSession, channelCreateLimiter, (request, 
   response.status(201).json({ channel });
 });
 
-app.delete('/api/voice-channels/:channelId', requireSession, (request, response) => {
+app.delete('/api/voice-channels/:channelId', requireSession, requirePermission(Permission.MANAGE_CHANNELS), (request, response) => {
   const channelId = request.params.channelId;
   if (typeof channelId !== 'string' || !getVoiceChannelById(channelId)) {
     response.status(404).json({ error: 'Canal de voz não encontrado.' });
@@ -665,6 +810,7 @@ app.post('/api/soundboard', requireSession, channelCreateLimiter, (request, resp
     response.status(409).json({ error: 'O servidor atingiu o limite de 100 sons no soundboard.' });
     return;
   }
+  if (rejectIfTimedOut(currentUser(response), response)) return;
 
   const sound = createSoundboardSound(
     body.data.name,
@@ -683,13 +829,309 @@ app.delete('/api/soundboard/:soundId', requireSession, (request, response) => {
     response.status(404).json({ error: 'Som não encontrado.' });
     return;
   }
-  if (!deleteSoundboardSound(soundId, currentUser(response).id)) {
+  const user = currentUser(response);
+  const canManageSoundboard = hasPermission(getUserPermissionBitfield(user.id), Permission.MANAGE_SOUNDBOARD);
+  if (!deleteSoundboardSound(soundId, user.id, canManageSoundboard)) {
     response.status(403).json({ error: 'Você só pode apagar sons que você mesmo enviou.' });
     return;
   }
   broadcast({ type: 'SOUNDBOARD_SOUND_DELETE', soundId });
   response.status(204).end();
 });
+
+app.get('/api/roles', requireSession, (_request, response) => {
+  response.json({ roles: listRoles() });
+});
+
+app.post('/api/roles', requireSession, requirePermission(Permission.MANAGE_ROLES), roleLimiter, (request, response) => {
+  const body = roleCreateSchema.safeParse(request.body);
+  if (!body.success) {
+    response.status(400).json({ error: 'Cargo inválido — verifique nome, cor e permissões.' });
+    return;
+  }
+  const requesterPosition = getUserHighestPosition(currentUser(response).id);
+  if (requesterPosition <= 0) {
+    response.status(403).json({ error: 'Você precisa de um cargo com posição maior que @everyone para criar cargos.' });
+    return;
+  }
+  if (getRoleByName(body.data.name)) {
+    response.status(409).json({ error: 'Já existe um cargo com esse nome.' });
+    return;
+  }
+  // Todo cargo novo nasce logo abaixo do cargo mais alto de quem criou —
+  // sem UI de reordenar posições (fora de escopo, ver DISCORD_PARITY_PLAN.md),
+  // isso garante que quem criou sempre consiga editar/apagar o que criou.
+  const position = requesterPosition - 1;
+  const role = createRole(body.data.name, body.data.color, body.data.permissions, position, body.data.hoist);
+  broadcast({ type: 'ROLE_CREATE', role });
+  response.status(201).json({ role });
+});
+
+app.patch('/api/roles/:roleId', requireSession, requirePermission(Permission.MANAGE_ROLES), roleLimiter, (request, response) => {
+  const roleId = request.params.roleId;
+  const existing = typeof roleId === 'string' ? getRoleById(roleId) : undefined;
+  if (!existing) {
+    response.status(404).json({ error: 'Cargo não encontrado.' });
+    return;
+  }
+  const requesterPosition = getUserHighestPosition(currentUser(response).id);
+  if (existing.position >= requesterPosition) {
+    response.status(403).json({ error: 'Você só pode editar cargos com posição menor que a sua.' });
+    return;
+  }
+  const body = roleUpdateSchema.safeParse(request.body);
+  if (!body.success) {
+    response.status(400).json({ error: 'Cargo inválido — verifique nome, cor e permissões.' });
+    return;
+  }
+  if (body.data.name) {
+    const duplicate = getRoleByName(body.data.name);
+    if (duplicate && duplicate.id !== existing.id) {
+      response.status(409).json({ error: 'Já existe um cargo com esse nome.' });
+      return;
+    }
+  }
+  const result = updateRole(roleId as string, body.data);
+  if (!result.ok) {
+    response.status(404).json({ error: 'Cargo não encontrado.' });
+    return;
+  }
+  broadcast({ type: 'ROLE_UPDATE', role: result.role });
+  response.json({ role: result.role });
+});
+
+app.delete('/api/roles/:roleId', requireSession, requirePermission(Permission.MANAGE_ROLES), (request, response) => {
+  const roleId = request.params.roleId;
+  const existing = typeof roleId === 'string' ? getRoleById(roleId) : undefined;
+  if (!existing) {
+    response.status(404).json({ error: 'Cargo não encontrado.' });
+    return;
+  }
+  const requesterPosition = getUserHighestPosition(currentUser(response).id);
+  if (existing.position >= requesterPosition) {
+    response.status(403).json({ error: 'Você só pode apagar cargos com posição menor que a sua.' });
+    return;
+  }
+  const result = deleteRole(roleId as string);
+  if (!result.ok) {
+    if (result.reason === 'IMMUTABLE') {
+      response.status(400).json({ error: 'O cargo @everyone não pode ser apagado.' });
+    } else {
+      response.status(404).json({ error: 'Cargo não encontrado.' });
+    }
+    return;
+  }
+  broadcast({ type: 'ROLE_DELETE', roleId: roleId as string });
+  response.status(204).end();
+});
+
+app.put(
+  '/api/roles/:roleId/members/:userId',
+  requireSession,
+  requirePermission(Permission.MANAGE_ROLES),
+  roleLimiter,
+  (request, response) => {
+    const roleId = request.params.roleId;
+    const userId = request.params.userId;
+    const role = typeof roleId === 'string' ? getRoleById(roleId) : undefined;
+    const targetUser = typeof userId === 'string' ? getUserById(userId) : undefined;
+    if (!role || !targetUser || roleId === EVERYONE_ROLE_ID) {
+      response.status(404).json({ error: 'Cargo ou membro não encontrado.' });
+      return;
+    }
+    const requesterPosition = getUserHighestPosition(currentUser(response).id);
+    if (role.position >= requesterPosition) {
+      response.status(403).json({ error: 'Você só pode atribuir cargos com posição menor que a sua.' });
+      return;
+    }
+    assignRole(userId as string, roleId as string);
+    const roleIds = getUserRoleIds(userId as string);
+    broadcast({ type: 'MEMBER_ROLES_UPDATE', userId: userId as string, roleIds });
+    response.status(204).end();
+  },
+);
+
+app.delete(
+  '/api/roles/:roleId/members/:userId',
+  requireSession,
+  requirePermission(Permission.MANAGE_ROLES),
+  roleLimiter,
+  (request, response) => {
+    const roleId = request.params.roleId;
+    const userId = request.params.userId;
+    const role = typeof roleId === 'string' ? getRoleById(roleId) : undefined;
+    if (!role || roleId === EVERYONE_ROLE_ID) {
+      response.status(404).json({ error: 'Cargo não encontrado.' });
+      return;
+    }
+    const requesterPosition = getUserHighestPosition(currentUser(response).id);
+    if (role.position >= requesterPosition) {
+      response.status(403).json({ error: 'Você só pode remover cargos com posição menor que a sua.' });
+      return;
+    }
+    unassignRole(userId as string, roleId as string);
+    const roleIds = getUserRoleIds(userId as string);
+    broadcast({ type: 'MEMBER_ROLES_UPDATE', userId: userId as string, roleIds });
+    response.status(204).end();
+  },
+);
+
+app.get('/api/members', requireSession, (_request, response) => {
+  response.json({ members: listMembers() });
+});
+
+app.post(
+  '/api/moderation/timeout',
+  requireSession,
+  requirePermission(Permission.MODERATE_MEMBERS),
+  moderationLimiter,
+  async (request, response) => {
+    const body = timeoutSchema.safeParse(request.body);
+    if (!body.success) {
+      response.status(400).json({ error: 'Informe o membro e a duração do timeout (1 a 10080 minutos).' });
+      return;
+    }
+    const user = currentUser(response);
+    if (!getUserById(body.data.userId)) {
+      response.status(404).json({ error: 'Membro não encontrado.' });
+      return;
+    }
+    const requesterPosition = getUserHighestPosition(user.id);
+    const targetPosition = getUserHighestPosition(body.data.userId);
+    const authorization = authorizeModerationAction(user.id, requesterPosition, body.data.userId, targetPosition);
+    if (!authorization.ok) {
+      response.status(403).json({
+        error: authorization.reason === 'SELF'
+          ? 'Você não pode aplicar timeout em si mesmo.'
+          : 'Você só pode silenciar membros com posição de cargo menor que a sua.',
+      });
+      return;
+    }
+    const timeoutUntil = Date.now() + body.data.minutes * 60_000;
+    setUserTimeout(body.data.userId, timeoutUntil);
+    await forceDisconnectFromVoice(body.data.userId);
+    broadcast({ type: 'MEMBER_TIMEOUT_UPDATE', userId: body.data.userId, timeoutUntil });
+    response.json({ timeoutUntil });
+  },
+);
+
+app.delete(
+  '/api/moderation/timeout/:userId',
+  requireSession,
+  requirePermission(Permission.MODERATE_MEMBERS),
+  moderationLimiter,
+  (request, response) => {
+    const userId = request.params.userId;
+    const targetUser = typeof userId === 'string' ? getUserById(userId) : undefined;
+    if (!targetUser) {
+      response.status(404).json({ error: 'Membro não encontrado.' });
+      return;
+    }
+    const requesterPosition = getUserHighestPosition(currentUser(response).id);
+    const targetPosition = getUserHighestPosition(userId as string);
+    const authorization = authorizeModerationAction(currentUser(response).id, requesterPosition, userId as string, targetPosition);
+    if (!authorization.ok) {
+      response.status(403).json({
+        error: authorization.reason === 'SELF'
+          ? 'Você não pode remover seu próprio timeout.'
+          : 'Você só pode remover timeout de membros com posição de cargo menor que a sua.',
+      });
+      return;
+    }
+    setUserTimeout(userId as string, null);
+    broadcast({ type: 'MEMBER_TIMEOUT_UPDATE', userId: userId as string, timeoutUntil: null });
+    response.status(204).end();
+  },
+);
+
+app.get('/api/moderation/bans', requireSession, requirePermission(Permission.BAN_MEMBERS), (_request, response) => {
+  response.json({ bans: listBans() });
+});
+
+app.post(
+  '/api/moderation/bans',
+  requireSession,
+  requirePermission(Permission.BAN_MEMBERS),
+  moderationLimiter,
+  async (request, response) => {
+    const body = banSchema.safeParse(request.body);
+    if (!body.success) {
+      response.status(400).json({ error: 'Informe o membro a ser banido.' });
+      return;
+    }
+    const user = currentUser(response);
+    if (!getUserById(body.data.userId)) {
+      response.status(404).json({ error: 'Membro não encontrado.' });
+      return;
+    }
+    const requesterPosition = getUserHighestPosition(user.id);
+    const targetPosition = getUserHighestPosition(body.data.userId);
+    const authorization = authorizeModerationAction(user.id, requesterPosition, body.data.userId, targetPosition);
+    if (!authorization.ok) {
+      response.status(403).json({
+        error: authorization.reason === 'SELF'
+          ? 'Você não pode banir a si mesmo.'
+          : 'Você só pode banir membros com posição de cargo menor que a sua.',
+      });
+      return;
+    }
+    banUser(body.data.userId, body.data.reason, user.id);
+    await forceDisconnectFromVoice(body.data.userId);
+    broadcast({ type: 'MEMBER_BANNED', userId: body.data.userId });
+    disconnectUser(body.data.userId);
+    response.status(204).end();
+  },
+);
+
+app.delete(
+  '/api/moderation/bans/:userId',
+  requireSession,
+  requirePermission(Permission.BAN_MEMBERS),
+  moderationLimiter,
+  (request, response) => {
+    const userId = request.params.userId;
+    if (typeof userId !== 'string' || !isBanned(userId)) {
+      response.status(404).json({ error: 'Esse membro não está banido.' });
+      return;
+    }
+    unbanUser(userId);
+    broadcast({ type: 'MEMBER_UNBANNED', userId });
+    response.status(204).end();
+  },
+);
+
+app.post(
+  '/api/moderation/voice-kick',
+  requireSession,
+  requirePermission(Permission.KICK_MEMBERS),
+  moderationLimiter,
+  async (request, response) => {
+    const body = voiceKickSchema.safeParse(request.body);
+    if (!body.success) {
+      response.status(400).json({ error: 'Informe o membro a ser expulso.' });
+      return;
+    }
+    const user = currentUser(response);
+    const requesterPosition = getUserHighestPosition(user.id);
+    const targetPosition = getUserHighestPosition(body.data.userId);
+    const authorization = authorizeModerationAction(user.id, requesterPosition, body.data.userId, targetPosition);
+    if (!authorization.ok) {
+      response.status(403).json({
+        error: authorization.reason === 'SELF'
+          ? 'Você não pode expulsar a si mesmo.'
+          : 'Você só pode expulsar membros com posição de cargo menor que a sua.',
+      });
+      return;
+    }
+    const roomId = await findActiveRoomIdForUser(body.data.userId);
+    if (!roomId) {
+      response.status(404).json({ error: 'Esse membro não está em nenhuma chamada de voz agora.' });
+      return;
+    }
+    await roomService.removeParticipant(roomId, body.data.userId);
+    response.status(204).end();
+  },
+);
 
 const webhookReceiver = new WebhookReceiver(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET);
 const ROOM_STATE_WEBHOOK_EVENTS = new Set([
@@ -794,6 +1236,7 @@ app.post('/api/livekit/token', requireSession, async (request, response) => {
     response.status(400).json({ error: 'Canal inválido.' });
     return;
   }
+  if (rejectIfTimedOut(currentUser(response), response)) return;
 
   const user = currentUser(response);
   const metadata: HumanParticipantMetadata = {

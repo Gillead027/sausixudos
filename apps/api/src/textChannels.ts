@@ -85,7 +85,7 @@ const selectMessageByIdStatement = db.prepare(`
 const updateMessageStatement = db.prepare(
   'UPDATE text_messages SET text = ?, edited_at = ? WHERE id = ? AND sender_id = ?',
 );
-const deleteMessageStatement = db.prepare('DELETE FROM text_messages WHERE id = ? AND sender_id = ?');
+const deleteMessageStatement = db.prepare('DELETE FROM text_messages WHERE id = ?');
 
 const listBotMessagesStatement = db.prepare(`
   SELECT id, channel_id, sender_name, text, music_card_json, created_at
@@ -269,15 +269,19 @@ export function editTextMessage(
 
 export type DeleteTextMessageResult = { ok: true } | { ok: false; reason: 'NOT_FOUND' | 'FORBIDDEN' };
 
+// canManageMessages vem do cargo do requisitante (permissão MANAGE_MESSAGES,
+// ver roles.ts) — permite que um moderador apague mensagem de outra pessoa,
+// além do autor sempre poder apagar a própria.
 export function deleteTextMessage(
   channelId: string,
   messageId: string,
   requesterId: string,
+  canManageMessages: boolean,
 ): DeleteTextMessageResult {
   const existing = getTextMessageById(channelId, messageId);
   if (!existing) return { ok: false, reason: 'NOT_FOUND' };
-  if (existing.senderId !== requesterId) return { ok: false, reason: 'FORBIDDEN' };
-  deleteMessageStatement.run(messageId, requesterId);
+  if (existing.senderId !== requesterId && !canManageMessages) return { ok: false, reason: 'FORBIDDEN' };
+  deleteMessageStatement.run(messageId);
   return { ok: true };
 }
 

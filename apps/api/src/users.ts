@@ -13,6 +13,7 @@ export interface UserRecord {
   pronouns: string;
   avatarDataUrl: string;
   bannerDataUrl: string;
+  timeoutUntil: number | null;
 }
 
 interface UserRow {
@@ -25,6 +26,7 @@ interface UserRow {
   pronouns: string;
   avatar_data_url: string;
   banner_data_url: string;
+  timeout_until: number | null;
 }
 
 function toRecord(row: UserRow): UserRecord {
@@ -38,6 +40,7 @@ function toRecord(row: UserRow): UserRecord {
     pronouns: row.pronouns,
     avatarDataUrl: row.avatar_data_url,
     bannerDataUrl: row.banner_data_url,
+    timeoutUntil: row.timeout_until,
   };
 }
 
@@ -49,6 +52,7 @@ const selectById = db.prepare('SELECT * FROM users WHERE id = ?');
 const updateProfileStatement = db.prepare(
   'UPDATE users SET accent_color = ?, status_text = ?, bio = ?, pronouns = ?, avatar_data_url = ?, banner_data_url = ? WHERE id = ?',
 );
+const updateTimeoutStatement = db.prepare('UPDATE users SET timeout_until = ? WHERE id = ?');
 
 export function createUser(username: string, password: string, accentColor: AccentColor): UserRecord {
   const id = randomUUID();
@@ -64,7 +68,12 @@ export function createUser(username: string, password: string, accentColor: Acce
     pronouns: '',
     avatarDataUrl: '',
     bannerDataUrl: '',
+    timeoutUntil: null,
   };
+}
+
+export function setUserTimeout(id: string, until: number | null): void {
+  updateTimeoutStatement.run(until, id);
 }
 
 export function getUserByUsername(username: string): UserRecord | undefined {

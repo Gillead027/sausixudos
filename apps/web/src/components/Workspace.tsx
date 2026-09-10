@@ -2,8 +2,10 @@ import { type FormEvent, type ReactNode, type RefObject, useCallback, useEffect,
 import { flushSync } from 'react-dom';
 import {
   ACCENT_COLORS,
+  hasPermission,
   MUSIC_BOT_IDENTITY,
   parseParticipantMetadata,
+  Permission,
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
   type AccentColor,
@@ -1602,6 +1604,7 @@ function SettingsModal({
 
 export function Workspace({ session, config, onSignOut, onProfileUpdated }: WorkspaceProps) {
   const voice = useVoiceRoom();
+  const canManageChannels = hasPermission(session.permissions, Permission.MANAGE_CHANNELS);
   const [rooms, setRooms] = useState<RoomSummary[]>(config.channels.map((channel) => ({ ...channel, participants: [] })));
   const [livekitAvailable, setLivekitAvailable] = useState(true);
   const [joiningId, setJoiningId] = useState<string | null>(null);
@@ -1833,6 +1836,24 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [voice.messages]);
 
+  useEffect(() => {
+    const unsubscribe = onRealtimeEvent((event) => {
+      if (event.type === 'MEMBER_BANNED' && event.userId === session.id) {
+        void onSignOut();
+      } else if (
+        (event.type === 'MEMBER_ROLES_UPDATE' || event.type === 'MEMBER_TIMEOUT_UPDATE') &&
+        event.userId === session.id
+      ) {
+        // Cargos/timeout de outra pessoa não afetam a UI local; quando é o
+        // próprio usuário, resincroniza a sessão pra refletir a nova
+        // permissão/estado sem exigir logout — mesma ideia do resync ao
+        // reconectar o WebSocket (ver onRealtimeConnect nos outros efeitos).
+        void api.getSession().then(({ user }) => onProfileUpdated(user)).catch(() => {});
+      }
+    });
+    return unsubscribe;
+  }, [session.id, onSignOut, onProfileUpdated]);
+
   const connectionLabel = useMemo(() => {
     switch (voice.connectionState) {
       case ConnectionState.Connected: return 'Conectado';
@@ -2026,7 +2047,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         onCreated={handleVoiceChannelCreated}
         returnFocusRef={createVoiceChannelButtonRef}
       />
-      <ServerSettings open={serverSettingsOpen} onClose={() => setServerSettingsOpen(false)} />
+      <ServerSettings open={serverSettingsOpen} onClose={() => setServerSettingsOpen(false)} session={session} />
       {voice.connected && (
         <VoiceAudioSinks
           participants={typedParticipants}
@@ -2058,16 +2079,18 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         <nav className="channels" aria-label="Canais do servidor">
           <div className="section-title">
             <span>CANAIS DE TEXTO</span>
-            <button
-              ref={createTextChannelButtonRef}
-              type="button"
-              className="add-channel-button"
-              onClick={() => setCreateTextChannelOpen(true)}
-              aria-label="Criar canal de texto"
-              title="Criar canal de texto"
-            >
-              <PlusIcon size={14} />
-            </button>
+            {canManageChannels && (
+              <button
+                ref={createTextChannelButtonRef}
+                type="button"
+                className="add-channel-button"
+                onClick={() => setCreateTextChannelOpen(true)}
+                aria-label="Criar canal de texto"
+                title="Criar canal de texto"
+              >
+                <PlusIcon size={14} />
+              </button>
+            )}
           </div>
           <div className="text-channel-list">
             {textChannels.map((channel) => {
@@ -2090,16 +2113,18 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           <div className="section-title">
             <span>CANAIS DE VOZ</span>
             <small>{rooms.reduce((sum, room) => sum + room.participants.length, 0)} online</small>
-            <button
-              ref={createVoiceChannelButtonRef}
-              type="button"
-              className="add-channel-button"
-              onClick={() => setCreateVoiceChannelOpen(true)}
-              aria-label="Criar canal de voz"
-              title="Criar canal de voz"
-            >
-              <PlusIcon size={14} />
-            </button>
+            {canManageChannels && (
+              <button
+                ref={createVoiceChannelButtonRef}
+                type="button"
+                className="add-channel-button"
+                onClick={() => setCreateVoiceChannelOpen(true)}
+                aria-label="Criar canal de voz"
+                title="Criar canal de voz"
+              >
+                <PlusIcon size={14} />
+              </button>
+            )}
           </div>
           {!livekitAvailable && <div className="service-warning">LiveKit indisponível</div>}
           {rooms.map((room) => (

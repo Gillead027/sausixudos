@@ -3,6 +3,7 @@ import type { Socket } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { RealtimeEvent } from '@sausixudos/shared';
 import { config } from './config.js';
+import { isBanned } from './moderation.js';
 import { getSessionFromCookieHeader } from './session.js';
 import { getUserById } from './users.js';
 
@@ -11,6 +12,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 
 interface TrackedSocket extends WebSocket {
   isAlive?: boolean;
+  userId?: string;
 }
 
 // Todo mundo autenticado vê o mesmo servidor/canais hoje (não existe conceito
@@ -23,6 +25,16 @@ export function broadcast(event: RealtimeEvent): void {
   const payload = JSON.stringify(event);
   for (const client of clients) {
     if (client.readyState === client.OPEN) client.send(payload);
+  }
+}
+
+// Usado quando um usuário é banido — sem isso, o cookie continuaria válido
+// até a próxima requisição HTTP dele; fechar a conexão de tempo real força o
+// cliente a notar imediatamente (o cliente web trata o close reconectando e
+// então recebe 401/403 do requireSession, que já limpa o cookie).
+export function disconnectUser(userId: string): void {
+  for (const client of clients) {
+    if (client.userId === userId) client.close();
   }
 }
 
@@ -54,7 +66,7 @@ export function attachRealtime(server: HttpServer): void {
 
     const identity = getSessionFromCookieHeader(request.headers.cookie);
     const user = identity ? getUserById(identity.id) : undefined;
-    if (!user) {
+    if (!user || isBanned(user.id)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -62,6 +74,7 @@ export function attachRealtime(server: HttpServer): void {
 
     wss.handleUpgrade(request, socket, head, (ws: TrackedSocket) => {
       ws.isAlive = true;
+      ws.userId = user.id;
       ws.on('pong', () => {
         ws.isAlive = true;
       });
