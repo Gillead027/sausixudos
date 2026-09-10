@@ -2,7 +2,7 @@
 
 Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord — app privado, self-hosted, para um grupo fechado de amigos. Atualizar conforme cada item avança. Categorias: `DONE`, `PARTIAL`, `MISSING`, `BLOCKED`, `OPTIONAL`, `PREMIUM`, `EXPERIMENTAL`.
 
-Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário; (6) cargos, permissões e moderação básica — kick/ban/timeout (ver §1, §14, §15); (7) mensagens fixadas e busca por canal (ver §8).
+Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário; (6) cargos, permissões e moderação básica — kick/ban/timeout (ver §1, §14, §15); (7) mensagens fixadas e busca por canal (ver §8); (8) upload de arquivo/imagem em mensagem via MinIO self-hosted (ver §0, §8) — primeiro serviço de infraestrutura novo desta sessão.
 
 ## 0. Arquitetura atual (para não recriar o que já existe)
 
@@ -16,8 +16,8 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Voz/vídeo/tela | LiveKit self-hosted (SFU) | Config via env var `LIVEKIT_CONFIG` no `docker-compose.yml` (não mais arquivo estático — precisava de `${LIVEKIT_API_KEY}` pro webhook). IP externo direto, **sem TURN/coturn** (aceitável só porque a VPS tem IP público; falha para clientes atrás de NAT simétrico). Webhook (`participant_joined`/`left`/`room_started`/`finished`) empurra estado de sala pro WebSocket da API. |
 | Mensagens de texto | WebSocket em tempo real | `apps/web/src/realtime.ts` + `apps/api/src/realtime.ts`. Fetch HTTP só no boot/reconexão; sem polling. |
 | Bot de música | Node standalone, participante LiveKit real | `apps/music-bot`. YouTube/Spotify(metadata)/SoundCloud, fila real, jitter buffer, scheduler sem deriva (corrigido nesta sessão). Card "tocando agora" resincronizado por um laço periódico *server-side* (não mais pelo poll do cliente). |
-| Upload/mídia | Nenhum. Avatar/banner via `data:` URL em coluna TEXT do SQLite | Sem storage de objetos (S3/MinIO), sem anexos de arquivo em mensagens, sem thumbnails de upload. |
-| Deploy | Docker Compose na VPS (147.93.11.201) + Caddy (TLS) | Serviços: `api`, `web`, `music-bot`, `livekit`, `pot-provider`, `caddy`. Sem Redis, sem fila de jobs, sem observabilidade estruturada. |
+| Upload/mídia | Anexo de mensagem via MinIO self-hosted (`apps/api/src/storage.ts`/`attachments.ts`) | Avatar/banner continuam via `data:` URL (não migrados, funcionam bem do jeito que estão). Anexos: até 15MB/arquivo, 5 por mensagem, upload em duas etapas (sobe → vincula ao enviar a mensagem), servidos por `GET /api/attachments/:id/:filename` que decide inline vs. download forçado no servidor (nunca no cliente) — só png/jpeg/webp/gif viram `<img>`, todo o resto (inclusive SVG) é download forçado, o que evita servir um arquivo malicioso como HTML/SVG a partir da nossa própria origem. Sem thumbnails/transcodificação de vídeo. |
+| Deploy | Docker Compose na VPS (147.93.11.201) + Caddy (TLS) | Serviços: `api`, `web`, `music-bot`, `livekit`, `pot-provider`, `caddy`, `minio` (novo — storage de anexos, nunca exposto à internet, só acessível pelo `api` via rede interna do compose). Sem Redis, sem fila de jobs, sem observabilidade estruturada. |
 | Conceito de "servidor" | **Não existe.** Um único servidor implícito ("Lobby dos amigos"), hardcoded na UI | Canais de texto são uma lista plana em `text_channels`. Canais de voz agora são a tabela `voice_channels` (CRUD via `/api/voice-channels`, broadcast ao vivo) — ainda sem categorias nem múltiplos servidores. |
 
 **Implicação central**: grande parte do pedido (múltiplos servidores, cargos por servidor, convites por servidor, temas por servidor, boost, server tags, onboarding, fórum, stage, eventos) pressupõe um modelo de dados "servidor" que **não existe hoje**. Isso não é um recurso faltando isoladamente — é uma mudança de esquema que quase tudo do FASE 1 em diante depende. Ver seção 1.
@@ -36,7 +36,7 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Convites reais (tabela, expiração, usos) | `MISSING` | Hoje é 1 token de convite global fixo no `.env`, sem rastreamento. |
 | Amigos / bloqueios / DMs / grupos | `MISSING` | Nenhuma tabela, nenhuma rota, nenhuma UI. |
 | WebSocket real para texto/presença/typing | `DONE` (texto/salas/canais) — `MISSING` (typing/presença de status) | `apps/api/src/realtime.ts` (`ws`, autenticado por cookie no handshake) + `apps/web/src/realtime.ts` (cliente com reconexão exponencial). Substituiu os 3 loops de polling (mensagens 2s, salas 4s, canais de texto 10s) por eventos `TEXT_MESSAGE_*`/`TEXT_CHANNEL_CREATE`/`VOICE_CHANNEL_*`/`ROOM_STATE_UPDATE`. Estado de sala de voz vem de webhook do LiveKit, não mais de poll de `roomService.listRooms`. Verificado ponta-a-ponta com dois clientes reais (latência ~7ms vs. até 2000ms do polling antigo) antes do deploy. Ainda falta: typing indicator e presença de status (online/ausente/dnd) — esses eventos não existem ainda, só os que já tinham equivalente em polling. |
-| Storage de objetos (uploads) | `MISSING` | Avatar/banner como `data:` URL em TEXT já é um gambiarra que não escala pra anexos de arquivo/vídeo. |
+| Storage de objetos (uploads) | `DONE` | MinIO self-hosted (novo serviço no `docker-compose.yml`, ver §0). Usado só para anexo de mensagem por enquanto — avatar/banner continuam via `data:` URL (não migrados, sem necessidade). |
 | Migrations versionadas | `PARTIAL` | Ainda é `CREATE TABLE IF NOT EXISTS`/seed condicional (sem versionamento formal), mas já suportou uma tabela nova (`voice_channels`) com sucesso e sem perda de dados em produção. Continua não sendo um sistema de migration de verdade — precisa existir antes das tabelas maiores (`servers`, `roles`, etc.). |
 
 **Recomendação**: a fundação de WebSocket + canais de voz como dados já está implementada e em produção (ver linhas acima). O próximo passo de fundação, ainda não feito, é o mesmo de antes: `servers`, `server_members`, `channels` unificando texto+voz sob um servidor, `roles`, `role_permissions`, `invites` reais, `friendships`, `dm_channels`. O WebSocket já existente deve ser estendido (não recriado) com os novos tipos de evento que essas features vão precisar.
@@ -146,7 +146,7 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Markdown (negrito/itálico/negrito+itálico/sublinhado/tachado/spoiler/código inline/bloco de código/autolink) | `DONE` — renderizador próprio em `apps/web/src/components/Markdown.tsx`, monta árvore de elementos React (nunca `dangerouslySetInnerHTML`), 15 testes unitários cobrindo formatação e segurança contra XSS. Faltam: escape com barra invertida, citações (`>`), listas. |
 | Emoji picker (unicode) | `MISSING` |
 | Emoji/sticker customizado do servidor | `BLOCKED` por §1 |
-| Upload de arquivo/imagem/vídeo em mensagem | `MISSING` — sem storage de objetos (ver §1) |
+| Upload de arquivo/imagem em mensagem | `DONE` — até 15MB/arquivo, 5 por mensagem, via MinIO (ver §0/§1); vídeo funciona como download genérico (sem preview/transcodificação) |
 | GIF picker | `MISSING` |
 
 ## 9. FASE 6 — PERSONALIZAÇÃO
@@ -195,7 +195,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 |---|---|
 | Hash de senha | `DONE` (a confirmar algoritmo exato em `users.ts`) |
 | HTTPS | `DONE` (Caddy) |
-| Rate limiting | `PARTIAL` — existe em auth (`authLimiter`) e criação de canal (`textChannelCreateLimiter`); não existe em mensagens, reações, uploads (que ainda não existem) |
+| Rate limiting | `DONE` (nos endpoints que existem) — auth, criação de canal, mensagens, reações, cargos, moderação e agora upload de anexo (`uploadLimiter`) têm limiter próprio |
 | Validação de permissão no backend | `DONE` (reduzida) — bitfield de permissões checado em canais/mensagens/soundboard/cargos/moderação, com hierarquia por posição de cargo; ainda sem allow/deny por canal individual (ver §1) |
 | CSP | `DONE` no cliente desktop empacotado; não configurado no `web` servido puro (não há necessidade igual, já que é servido por origem própria via Caddy) |
 | Admin global (painel) | `PARTIAL` — a aba "Membros"/"Cargos" das configurações do servidor já cobre moderação básica (ver §1, §15); não há um painel dedicado separado |
@@ -220,7 +220,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 11. Soundboard — `DONE` (áudio real via LiveKit; falta confirmação ao vivo do usuário numa call de verdade)
 12. Roles/permissões — `DONE` (globais, sem hierarquia completa de servidor — ver §1)
 13. Administração — `DONE` (básica: kick da voz, timeout, ban/desban, cargos — via aba "Membros"/"Cargos"; sem painel dedicado nem audit log, ver §14)
-14. Chat completo — `PARTIAL` (texto em tempo real, markdown, edição/exclusão, reações, reply, pins e busca por canal já funcionam; threads/forward/emoji picker completo/upload de arquivo ainda ausentes)
+14. Chat completo — `PARTIAL` (texto em tempo real, markdown, edição/exclusão, reações, reply, pins, busca por canal e upload de arquivo/imagem já funcionam; threads/forward/emoji picker completo ainda ausentes — forward bloqueado por §1)
 
 ---
 
@@ -229,10 +229,11 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 Dado que grande parte do pedido depende da fundação de dados (§1) que não existe, e que o próprio usuário pediu para não trabalhar em tudo simultaneamente, os candidatos a "próximo passo" são:
 
 - **A) Fundação de dados + WebSocket real** — `DONE` (ver §1). Necessário antes de roles/permissões/DMs/moderação/auditoria.
-- **B) Chat completo no servidor único atual** — markdown, edição/exclusão, reações, reply, pins e busca por canal **já feitos** (ver §8). Falta: forward (depende de DM/multi-servidor, `BLOCKED` por §1), emoji picker completo, upload de arquivo (exige decidir armazenamento — MinIO na própria VPS é a opção mais compatível com a infra atual).
+- **B) Chat completo no servidor único atual** — markdown, edição/exclusão, reações, reply, pins, busca por canal e upload de arquivo/imagem **já feitos** (ver §8). Falta só: forward (depende de DM/multi-servidor, `BLOCKED` por §1) e emoji picker completo — os dois de baixo valor isolado ou bloqueados, então esta opção está praticamente esgotada.
 - **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — `DONE` (ver §1, §14, §15). Cargos globais reais, bitfield de permissões, hierarquia por posição, kick/ban/timeout com força de desconexão real, aba "Cargos"/"Membros" funcional. Verificado com 28 checagens de E2E real (dois usuários, WebSocket, banco) e confirmado em produção logo após o deploy. Pendente só de uma passada visual/UX do usuário nas novas telas (não dá pra abrir navegador a partir deste ambiente).
 - **D) Soundboard** — `DONE` (ver §12), pendente só de confirmação ao vivo do usuário numa call real.
+- **E) Upload de arquivo/imagem em mensagem** — `DONE` (ver §0/§1/§8). Primeiro serviço de infraestrutura novo da sessão (MinIO self-hosted, nunca exposto à internet). Verificado com 18 checagens locais (MinIO real via Docker, incluindo a prova de segurança de que um SVG malicioso é sempre forçado a download) + 8 checagens direto em produção via HTTPS (registro, upload, download com bytes idênticos, envio de mensagem, exclusão limpando o objeto).
 
-Com A, C e D feitos e B quase fechado (só falta upload de arquivo, emoji picker completo e forward — os dois últimos de baixo valor isolado ou bloqueados), o que resta de maior impacto agora é: (1) upload de arquivo/imagem em mensagem, que exige decidir armazenamento de objetos antes de começar; ou (2) avançar a fundação maior (`servers`, `server_members`, amigos/DMs) que ainda bloqueia múltiplos servidores, convites reais, forward e boa parte do FASE 7/8 — esse é o trabalho de maior volume que resta no pedido original.
+Com A, C, D e E feitos e B praticamente esgotado (só restam forward e emoji picker completo, ambos de baixo valor isolado ou bloqueados), o que resta de maior impacto agora é avançar a fundação maior (`servers`, `server_members`, amigos/DMs) que ainda bloqueia múltiplos servidores, convites reais, forward e boa parte do FASE 7/8 — esse é de longe o trabalho de maior volume que resta no pedido original, e o único item grande ainda não iniciado.
 
 Este documento será atualizado a cada sessão de trabalho subsequente com o que foi de fato implementado, testado e implantado — nunca marcar `DONE` sem teste ponta a ponta real, conforme a regra do pedido original.
