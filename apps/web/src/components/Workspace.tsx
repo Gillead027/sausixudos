@@ -10,6 +10,7 @@ import {
   type Activity,
   type PublicConfig,
   type RoomSummary,
+  type SoundboardSound,
   type TextChannel,
   type UserSession,
   type VoiceChannel,
@@ -33,12 +34,14 @@ import {
   getChatFontStep,
   getMessageSpacingStep,
   getOutputVolume,
+  getSoundboardVolume,
   getUiAccent,
   getUiZoomStep,
   MESSAGE_SPACING_SCALES,
   setChatFontStep,
   setMessageSpacingStep,
   setOutputVolume,
+  setSoundboardVolume,
   setUiAccent,
   setUiZoomStep,
   UI_ACCENT_SWATCHES,
@@ -61,6 +64,7 @@ import {
   SearchIcon,
   SettingsIcon,
   ShareIcon,
+  SoundboardIcon,
   SpeakerIcon,
   UserIcon,
   VoiceIcon,
@@ -71,6 +75,7 @@ import { ProfilePopover, type ProfilePopoverTarget } from './ProfilePopover';
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
 import { ServerSettings } from './ServerSettings';
+import { SoundboardPanel, SoundboardToast } from './Soundboard';
 import { CreateTextChannelDialog, TextChannelView } from './TextChannels';
 import { MusicCard } from './MusicCard';
 
@@ -588,12 +593,14 @@ function VoiceAudioSinks({
   volumes,
   streamVolumes,
   outputVolume,
+  soundboardVolume,
   deafened,
 }: {
   participants: (LocalParticipant | RemoteParticipant)[];
   volumes: Record<string, number>;
   streamVolumes: Record<string, number>;
   outputVolume: number;
+  soundboardVolume: number;
   deafened: boolean;
 }) {
   return (
@@ -612,6 +619,7 @@ function VoiceAudioSinks({
               volume={volumes[participant.identity] ?? 100}
               streamVolume={streamVolumes[participant.identity] ?? 100}
               outputVolume={outputVolume}
+              soundboardVolume={soundboardVolume}
               deafened={deafened}
               trackVersion={trackVersion}
             />
@@ -783,6 +791,8 @@ function SettingsModal({
   chooseUiAccent,
   outputVolume,
   chooseOutputVolume,
+  soundboardVolume,
+  chooseSoundboardVolume,
   profileColor,
   setProfileColor,
   profileStatus,
@@ -852,6 +862,8 @@ function SettingsModal({
   chooseUiAccent: (color: string, enabled: boolean) => void;
   outputVolume: number;
   chooseOutputVolume: (value: number) => void;
+  soundboardVolume: number;
+  chooseSoundboardVolume: (value: number) => void;
   profileColor: AccentColor;
   setProfileColor: (color: AccentColor) => void;
   profileStatus: string;
@@ -1195,6 +1207,22 @@ function SettingsModal({
                             onChange={(event) => chooseOutputVolume(Number(event.target.value))}
                           />
                           <output>{outputVolume}%</output>
+                        </div>
+                      </div>
+                    )}
+                    {matchesSearch('volume do soundboard') && (
+                      <div>
+                        <label htmlFor="soundboard-volume">Volume do soundboard</label>
+                        <div className="pref-slider-row">
+                          <input
+                            id="soundboard-volume"
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={soundboardVolume}
+                            onChange={(event) => chooseSoundboardVolume(Number(event.target.value))}
+                          />
+                          <output>{soundboardVolume}%</output>
                         </div>
                       </div>
                     )}
@@ -1597,6 +1625,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [soundboardOpen, setSoundboardOpen] = useState(false);
+  const [soundboardSounds, setSoundboardSounds] = useState<SoundboardSound[]>([]);
   const [textChannels, setTextChannels] = useState<TextChannel[]>([]);
   const [selectedTextChannelId, setSelectedTextChannelId] = useState<string | null>(null);
   const [createTextChannelOpen, setCreateTextChannelOpen] = useState(false);
@@ -1610,6 +1640,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [uiZoomStep, setUiZoomStepState] = useState(() => getUiZoomStep());
   const [uiAccent, setUiAccentState] = useState(() => getUiAccent());
   const [outputVolume, setOutputVolumeState] = useState(() => getOutputVolume());
+  const [soundboardVolume, setSoundboardVolumeState] = useState(() => getSoundboardVolume());
   const [profileColor, setProfileColor] = useState<AccentColor>(session.accentColor);
   const [profileStatus, setProfileStatus] = useState(session.statusText);
   const [profileBio, setProfileBio] = useState(session.bio);
@@ -1670,6 +1701,11 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   function chooseOutputVolume(value: number) {
     setOutputVolume(value);
     setOutputVolumeState(value);
+  }
+
+  function chooseSoundboardVolume(value: number) {
+    setSoundboardVolume(value);
+    setSoundboardVolumeState(value);
   }
 
   function resetProfileDraft() {
@@ -1762,6 +1798,29 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     const unsubscribeEvent = onRealtimeEvent((event) => {
       if (event.type !== 'TEXT_CHANNEL_CREATE') return;
       setTextChannels((current) => (current.some(({ id }) => id === event.channel.id) ? current : [...current, event.channel]));
+    });
+    return () => {
+      active = false;
+      unsubscribeConnect();
+      unsubscribeEvent();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void api.getSoundboardSounds().then(({ sounds }) => { if (active) setSoundboardSounds(sounds); }).catch(() => {
+        // Mantém a última lista disponível; reconectar dispara um novo fetch.
+      });
+    };
+    refresh();
+    const unsubscribeConnect = onRealtimeConnect(refresh);
+    const unsubscribeEvent = onRealtimeEvent((event) => {
+      if (event.type === 'SOUNDBOARD_SOUND_CREATE') {
+        setSoundboardSounds((current) => (current.some(({ id }) => id === event.sound.id) ? current : [...current, event.sound]));
+      } else if (event.type === 'SOUNDBOARD_SOUND_DELETE') {
+        setSoundboardSounds((current) => current.filter(({ id }) => id !== event.soundId));
+      }
     });
     return () => {
       active = false;
@@ -1909,6 +1968,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         chooseUiAccent={chooseUiAccent}
         outputVolume={outputVolume}
         chooseOutputVolume={chooseOutputVolume}
+        soundboardVolume={soundboardVolume}
+        chooseSoundboardVolume={chooseSoundboardVolume}
         profileColor={profileColor}
         setProfileColor={setProfileColor}
         profileStatus={profileStatus}
@@ -1972,6 +2033,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           volumes={volumes}
           streamVolumes={streamVolumes}
           outputVolume={outputVolume}
+          soundboardVolume={soundboardVolume}
           deafened={voice.deafened || (voice.shareAudioActive && !allowListenWhileSharing)}
         />
       )}
@@ -2218,6 +2280,7 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
         <div className={`room-content ${chatOpen && voice.connected ? 'with-chat' : ''}`}>
           <section className="stage-column">
             <div className="stage-content">
+              {voice.connected && <SoundboardToast event={voice.soundboardEvent} />}
               {joiningId || voice.connectionState === ConnectionState.Connecting ? (
                 <RoomSkeleton />
               ) : voice.connected ? (
@@ -2281,6 +2344,26 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
                 >
                   <ShareIcon />
                 </button>
+                <div className="soundboard-anchor">
+                  <button
+                    className={`voice-action ${soundboardOpen ? 'sharing' : ''}`}
+                    type="button"
+                    onClick={() => setSoundboardOpen((open) => !open)}
+                    title="Soundboard"
+                    aria-label="Soundboard"
+                  >
+                    <SoundboardIcon />
+                  </button>
+                  <SoundboardPanel
+                    open={soundboardOpen}
+                    onClose={() => setSoundboardOpen(false)}
+                    sounds={soundboardSounds}
+                    ownUserId={session.id}
+                    onPlay={(sound) => void voice.playSoundboardSound(sound)}
+                    onCreated={(sound) => setSoundboardSounds((current) => current.some((s) => s.id === sound.id) ? current : [...current, sound])}
+                    onDeleted={(soundId) => setSoundboardSounds((current) => current.filter((s) => s.id !== soundId))}
+                  />
+                </div>
                 <button className="voice-action leave" type="button" onClick={() => void voice.disconnect()} title="Sair do canal">
                   <LeaveIcon />
                 </button>

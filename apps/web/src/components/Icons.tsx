@@ -129,3 +129,11 @@ export function SmileIcon(props: IconProps) {
 export function ReplyIcon(props: IconProps) {
   return <Icon {...props}><path d="M9 6 4 11l5 5" /><path d="M4 11h9a6 6 0 0 1 6 6v2" /></Icon>;
 }
+
+export function SoundboardIcon(props: IconProps) {
+  return <Icon {...props}><rect x="3" y="3" width="8" height="8" rx="2" /><rect x="13" y="3" width="8" height="8" rx="2" /><rect x="3" y="13" width="8" height="8" rx="2" /><path d="M15.5 15.5v4.5l4-2.25z" fill="currentColor" stroke="none" /></Icon>;
+}
+
+export function UploadIcon(props: IconProps) {
+  return <Icon {...props}><path d="M12 16V4M8 8l4-4 4 4" /><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></Icon>;
+}

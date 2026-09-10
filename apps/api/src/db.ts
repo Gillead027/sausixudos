@@ -69,6 +69,16 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_message_reactions_message
     ON message_reactions(message_id);
+
+  CREATE TABLE IF NOT EXISTS soundboard_sounds (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    audio_data_url TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 // O SausiMusic mantém um único player persistente por canal de texto. Limpa

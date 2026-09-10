@@ -6,8 +6,17 @@ interface RemoteAudioSinkProps {
   volume: number;
   streamVolume: number;
   outputVolume: number;
+  soundboardVolume: number;
   deafened: boolean;
   trackVersion: string;
+}
+
+// Tracks de soundboard não têm Source dedicado no LiveKit — publicadas como
+// Unknown com name "soundboard" (ver useVoiceRoom.ts, playSoundboardSound).
+// Sem esse reconhecimento aqui, elas nunca ganhariam um elemento <audio> e
+// ninguém além de quem tocou ouviria o som.
+function isSoundboardPublication(publication: RemoteTrackPublication): boolean {
+  return publication.source === Track.Source.Unknown && publication.trackName === 'soundboard';
 }
 
 export function RemoteAudioSink({
@@ -15,6 +24,7 @@ export function RemoteAudioSink({
   volume,
   streamVolume,
   outputVolume,
+  soundboardVolume,
   deafened,
   trackVersion,
 }: RemoteAudioSinkProps) {
@@ -26,13 +36,22 @@ export function RemoteAudioSink({
 
     const publications = Array.from(participant.audioTrackPublications.values()) as RemoteTrackPublication[];
     const elements = publications
-      .filter((publication) => publication.source === Track.Source.Microphone || publication.source === Track.Source.ScreenShareAudio)
+      .filter(
+        (publication) =>
+          publication.source === Track.Source.Microphone ||
+          publication.source === Track.Source.ScreenShareAudio ||
+          isSoundboardPublication(publication),
+      )
       .filter((publication): publication is RemoteTrackPublication & { track: RemoteAudioTrack } => publication.track instanceof RemoteAudioTrack)
       .map((publication) => {
-        // Voz e áudio da transmissão de tela têm volumes independentes —
-        // alguém pode querer ouvir a pessoa falando alto e o áudio do jogo
-        // dela mais baixo (ou o contrário).
-        const perTrackVolume = publication.source === Track.Source.ScreenShareAudio ? streamVolume : volume;
+        // Voz, áudio de transmissão de tela e soundboard têm volumes
+        // independentes — alguém pode querer ouvir a pessoa falando alto e
+        // o jogo dela (ou os sons que ela dispara) mais baixo.
+        const perTrackVolume = isSoundboardPublication(publication)
+          ? soundboardVolume
+          : publication.source === Track.Source.ScreenShareAudio
+            ? streamVolume
+            : volume;
         const element = publication.track.attach();
         element.autoplay = true;
         element.muted = deafened;
@@ -47,7 +66,7 @@ export function RemoteAudioSink({
         element.remove();
       }
     };
-  }, [participant, volume, streamVolume, outputVolume, deafened, trackVersion]);
+  }, [participant, volume, streamVolume, outputVolume, soundboardVolume, deafened, trackVersion]);
 
   return <div ref={containerRef} className="audio-sink" aria-hidden="true" />;
 }

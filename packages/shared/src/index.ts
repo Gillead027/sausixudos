@@ -11,10 +11,14 @@ export const PRONOUNS_MAX_LENGTH = 30;
 export const AVATAR_DATA_URL_MAX_LENGTH = 400_000;
 export const BANNER_DATA_URL_MAX_LENGTH = 1_100_000;
 export const VOICE_CHAT_TOPIC = 'sausixudos-chat';
+export const SOUNDBOARD_ANNOUNCE_TOPIC = 'sausixudos-soundboard';
 export const MUSIC_BOT_IDENTITY = 'music-bot';
 export const MUSIC_BOT_DISPLAY_NAME = 'SausiMusic';
 export const MUSIC_BOT_TRACK_NAME = 'sausimusic-test-tone';
 export const MUSIC_PLAY_INPUT_MAX_LENGTH = 300;
+export const SOUNDBOARD_NAME_MAX_LENGTH = 32;
+export const SOUNDBOARD_AUDIO_DATA_URL_MAX_LENGTH = 600_000;
+export const SOUNDBOARD_MAX_DURATION_MS = 5_500;
 
 export const ACCENT_COLORS = [
   '#4e7960',
@@ -365,6 +369,33 @@ export interface ChatMessage {
   musicCard?: MusicNowPlayingCard;
 }
 
+export interface SoundboardSound {
+  id: string;
+  name: string;
+  emoji: string;
+  // data: URL de áudio curto (≤ SOUNDBOARD_AUDIO_DATA_URL_MAX_LENGTH) —
+  // mesmo padrão de avatar/banner, sem storage de objetos separado (ver
+  // DISCORD_PARITY_PLAN.md). durationMs é só o que o navegador do autor
+  // mediu na hora do upload, usado pra exibir e pra saber quando parar de
+  // publicar a faixa temporária no LiveKit ao tocar.
+  audioDataUrl: string;
+  durationMs: number;
+  createdBy: string;
+  createdByName: string;
+  createdAt: number;
+}
+
+// Publicado no canal de dados do LiveKit (mesmo mecanismo do chat de voz)
+// quando alguém toca um som — o áudio em si chega pra todo mundo via uma
+// track de verdade publicada pelo próprio autor (ver useVoiceRoom.ts),
+// então isso é só pra mostrar "Fulano tocou 🔔 Nome do som" na UI de quem
+// já está na call.
+export interface SoundboardAnnouncement {
+  soundId: string;
+  soundName: string;
+  emoji: string;
+}
+
 export interface TextChannel {
   id: string;
   name: string;
@@ -415,4 +446,6 @@ export type RealtimeEvent =
   | { type: 'VOICE_CHANNEL_DELETE'; channelId: string }
   | { type: 'ROOM_STATE_UPDATE'; room: RoomSummary }
   | { type: 'TEXT_MESSAGE_REACTION_ADD'; channelId: string; messageId: string; emoji: ReactionEmoji; userId: string }
-  | { type: 'TEXT_MESSAGE_REACTION_REMOVE'; channelId: string; messageId: string; emoji: ReactionEmoji; userId: string };
+  | { type: 'TEXT_MESSAGE_REACTION_REMOVE'; channelId: string; messageId: string; emoji: ReactionEmoji; userId: string }
+  | { type: 'SOUNDBOARD_SOUND_CREATE'; sound: SoundboardSound }
+  | { type: 'SOUNDBOARD_SOUND_DELETE'; soundId: string };

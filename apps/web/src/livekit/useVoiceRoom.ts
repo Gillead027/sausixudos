@@ -24,9 +24,12 @@ import {
   MUSIC_BOT_DISPLAY_NAME,
   MUSIC_BOT_IDENTITY,
   parseParticipantMetadata,
+  SOUNDBOARD_ANNOUNCE_TOPIC,
   VOICE_CHAT_TOPIC,
   type Activity,
   type ChatMessage,
+  type SoundboardAnnouncement,
+  type SoundboardSound,
   type VoiceChannel,
 } from '@sausixudos/shared';
 import { api } from '../api';
@@ -255,6 +258,10 @@ export function useVoiceRoom() {
   const [speakers, setSpeakers] = useState<Set<string>>(new Set());
   const [screenTracks, setScreenTracks] = useState<ScreenTrackView[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [soundboardEvent, setSoundboardEvent] = useState<
+    (SoundboardAnnouncement & { id: number; fromName: string }) | null
+  >(null);
+  const soundboardEventCounter = useRef(0);
   const [error, setError] = useState('');
   const [deafened, setDeafened] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
@@ -374,6 +381,22 @@ export function useVoiceRoom() {
       _kind?: unknown,
       topic?: string,
     ) => {
+      if (topic === SOUNDBOARD_ANNOUNCE_TOPIC && participant) {
+        try {
+          const announcement = JSON.parse(new TextDecoder().decode(payload)) as SoundboardAnnouncement;
+          if (typeof announcement.soundId === 'string' && typeof announcement.soundName === 'string') {
+            soundboardEventCounter.current += 1;
+            setSoundboardEvent({
+              ...announcement,
+              id: soundboardEventCounter.current,
+              fromName: participant.name || participant.identity,
+            });
+          }
+        } catch {
+          // Ignora pacotes malformados — o áudio já toca independente disso.
+        }
+        return;
+      }
       if (topic !== VOICE_CHAT_TOPIC || !participant) return;
       try {
         const received = JSON.parse(new TextDecoder().decode(payload)) as ChatMessage;
@@ -991,6 +1014,57 @@ export function useVoiceRoom() {
     [currentChannel?.id, room],
   );
 
+  // O áudio chega pra todo mundo via uma track de verdade publicada por
+  // quem tocou (LiveKit distribui pra sala inteira) — nada de servidor
+  // repassando bytes de áudio. A track fica de pé só enquanto o som toca:
+  // publica no início, despublica no "ended". O anúncio (quem tocou o quê)
+  // é só cosmético, via canal de dados, igual o chat de voz.
+  const playSoundboardSound = useCallback(
+    async (sound: SoundboardSound) => {
+      if (room.state !== ConnectionState.Connected) return;
+      const audioContext = new AudioContext();
+      try {
+        const response = await fetch(sound.audioDataUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+        const destination = audioContext.createMediaStreamDestination();
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(destination);
+        source.connect(audioContext.destination);
+
+        const [track] = destination.stream.getAudioTracks();
+        if (!track) throw new Error('Não foi possível preparar o áudio do soundboard.');
+
+        source.onended = () => {
+          void room.localParticipant.unpublishTrack(track, true).catch(() => {});
+          void audioContext.close().catch(() => {});
+        };
+
+        await room.localParticipant.publishTrack(track, {
+          name: 'soundboard',
+          source: Track.Source.Unknown,
+        });
+
+        await room.localParticipant
+          .publishData(
+            new TextEncoder().encode(
+              JSON.stringify({ soundId: sound.id, soundName: sound.name, emoji: sound.emoji } satisfies SoundboardAnnouncement),
+            ),
+            { reliable: true, topic: SOUNDBOARD_ANNOUNCE_TOPIC },
+          )
+          .catch(() => {});
+
+        source.start();
+      } catch (playError) {
+        await audioContext.close().catch(() => {});
+        setError(playError instanceof Error ? playError.message : 'Não foi possível tocar esse som.');
+      }
+    },
+    [room],
+  );
+
   const connected = connectionState === ConnectionState.Connected;
 
   return useMemo(
@@ -1046,6 +1120,8 @@ export function useVoiceRoom() {
       toggleCamera,
       toggleScreenShare,
       sendMessage,
+      playSoundboardSound,
+      soundboardEvent,
       startAudio: () => room.startAudio().then(syncRoom),
     }),
     [
@@ -1099,6 +1175,8 @@ export function useVoiceRoom() {
       toggleCamera,
       toggleScreenShare,
       sendMessage,
+      playSoundboardSound,
+      soundboardEvent,
       syncRoom,
     ],
   );

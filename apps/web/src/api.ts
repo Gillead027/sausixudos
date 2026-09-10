@@ -5,6 +5,7 @@ import type {
   PublicConfig,
   ReactionEmoji,
   RoomSummary,
+  SoundboardSound,
   TextChannel,
   TextMessage,
   UserSession,
@@ -117,4 +118,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ roomId }),
     }),
+  getSoundboardSounds: () => request<{ sounds: SoundboardSound[] }>('/api/soundboard'),
+  createSoundboardSound: (name: string, emoji: string, audioDataUrl: string, durationMs: number) =>
+    request<{ sound: SoundboardSound }>('/api/soundboard', {
+      method: 'POST',
+      body: JSON.stringify({ name, emoji, audioDataUrl, durationMs }),
+    }),
+  deleteSoundboardSound: (soundId: string) =>
+    request<void>(`/api/soundboard/${encodeURIComponent(soundId)}`, { method: 'DELETE' }),
 };

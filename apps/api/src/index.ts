@@ -16,6 +16,9 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   PRONOUNS_MAX_LENGTH,
+  SOUNDBOARD_AUDIO_DATA_URL_MAX_LENGTH,
+  SOUNDBOARD_MAX_DURATION_MS,
+  SOUNDBOARD_NAME_MAX_LENGTH,
   STATUS_TEXT_MAX_LENGTH,
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
@@ -66,6 +69,7 @@ import {
   getVoiceChannelByName,
   listVoiceChannels,
 } from './voiceChannels.js';
+import { createSoundboardSound, deleteSoundboardSound, getSoundboardSoundById, listSoundboardSounds } from './soundboard.js';
 
 const app = express();
 const roomService = new RoomServiceClient(
@@ -138,6 +142,14 @@ const loginSchema = z.object({
 });
 
 const dataUrlPattern = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
+const audioDataUrlPattern = /^data:audio\/(mpeg|ogg|wav|webm);base64,[A-Za-z0-9+/]+=*$/;
+
+const soundboardSoundSchema = z.object({
+  name: z.string().trim().min(1).max(SOUNDBOARD_NAME_MAX_LENGTH),
+  emoji: z.string().trim().min(1).max(8),
+  audioDataUrl: z.string().max(SOUNDBOARD_AUDIO_DATA_URL_MAX_LENGTH).refine((value) => audioDataUrlPattern.test(value), 'Áudio inválido.'),
+  durationMs: z.number().int().positive().max(SOUNDBOARD_MAX_DURATION_MS),
+});
 
 const profileSchema = z.object({
   accentColor: z.enum(ACCENT_COLORS),
@@ -636,6 +648,46 @@ app.delete('/api/voice-channels/:channelId', requireSession, (request, response)
   }
   deleteVoiceChannel(channelId);
   broadcast({ type: 'VOICE_CHANNEL_DELETE', channelId });
+  response.status(204).end();
+});
+
+app.get('/api/soundboard', requireSession, (_request, response) => {
+  response.json({ sounds: listSoundboardSounds() });
+});
+
+app.post('/api/soundboard', requireSession, channelCreateLimiter, (request, response) => {
+  const body = soundboardSoundSchema.safeParse(request.body);
+  if (!body.success) {
+    response.status(400).json({ error: 'Som inválido — verifique nome, emoji e duração (máx. 5,5s).' });
+    return;
+  }
+  if (listSoundboardSounds().length >= 100) {
+    response.status(409).json({ error: 'O servidor atingiu o limite de 100 sons no soundboard.' });
+    return;
+  }
+
+  const sound = createSoundboardSound(
+    body.data.name,
+    body.data.emoji,
+    body.data.audioDataUrl,
+    body.data.durationMs,
+    currentUser(response),
+  );
+  broadcast({ type: 'SOUNDBOARD_SOUND_CREATE', sound });
+  response.status(201).json({ sound });
+});
+
+app.delete('/api/soundboard/:soundId', requireSession, (request, response) => {
+  const soundId = request.params.soundId;
+  if (typeof soundId !== 'string' || !getSoundboardSoundById(soundId)) {
+    response.status(404).json({ error: 'Som não encontrado.' });
+    return;
+  }
+  if (!deleteSoundboardSound(soundId, currentUser(response).id)) {
+    response.status(403).json({ error: 'Você só pode apagar sons que você mesmo enviou.' });
+    return;
+  }
+  broadcast({ type: 'SOUNDBOARD_SOUND_DELETE', soundId });
   response.status(204).end();
 });
 

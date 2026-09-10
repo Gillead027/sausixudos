@@ -19,6 +19,7 @@ const UI_ZOOM_KEY = 'gc:ui-zoom-step';
 const UI_ACCENT_KEY = 'gc:ui-accent';
 const UI_ACCENT_ENABLED_KEY = 'gc:ui-accent-enabled';
 const OUTPUT_VOLUME_KEY = 'gc:output-volume';
+const SOUNDBOARD_VOLUME_KEY = 'gc:soundboard-volume';
 
 export function getOutputVolume(): number {
   const stored = localStorage.getItem(OUTPUT_VOLUME_KEY);
@@ -31,6 +32,20 @@ export function getOutputVolume(): number {
 
 export function setOutputVolume(value: number): void {
   localStorage.setItem(OUTPUT_VOLUME_KEY, String(value));
+}
+
+// Preferência de quem ESCUTA, não de quem toca — cada participante decide o
+// quão alto os sons do soundboard dos outros chegam pra ele, igual o
+// volume de stream já funciona hoje (RemoteAudioSink.tsx).
+export function getSoundboardVolume(): number {
+  const stored = localStorage.getItem(SOUNDBOARD_VOLUME_KEY);
+  if (stored === null) return 100;
+  const value = Number(stored);
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? value : 100;
+}
+
+export function setSoundboardVolume(value: number): void {
+  localStorage.setItem(SOUNDBOARD_VOLUME_KEY, String(value));
 }
 
 function readStep(key: string, scales: readonly number[]): number {

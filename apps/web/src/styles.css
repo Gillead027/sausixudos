@@ -575,6 +575,65 @@ button:disabled { cursor: default; opacity: .45; }
 }
 .message-jump-highlight { animation: message-jump-flash 1.5s ease-out; border-radius: var(--radius-sm); }
 
+/* Soundboard — painel ancorado no botão da barra de voz, abre pra cima
+   (mesma lógica do device-menu-popover, já que a barra fica no rodapé). */
+.soundboard-anchor { position: relative; }
+.soundboard-panel {
+  position: absolute; z-index: 30; bottom: 54px; left: 50%; transform: translateX(-50%);
+  width: 300px; max-height: 420px; display: flex; flex-direction: column;
+  border: 1px solid var(--border-light); border-radius: var(--radius-md);
+  background: #1e1f22; box-shadow: var(--shadow-md); animation: pop-in 160ms cubic-bezier(.34, 1.56, .64, 1);
+}
+.soundboard-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: 12px; }
+.soundboard-panel-header button { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; color: var(--text-muted); background: none; cursor: pointer; }
+.soundboard-panel-header button:hover { color: var(--text-primary); background: var(--hover); }
+.soundboard-search { display: flex; align-items: center; gap: 6px; margin: 8px 10px; padding: 0 9px; height: 30px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-muted); background: var(--panel-raised); }
+.soundboard-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--text-primary); background: none; font-size: 11px; }
+.soundboard-grid { flex: 1; min-height: 60px; max-height: 220px; overflow-y: auto; padding: 0 10px 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.soundboard-empty { grid-column: 1 / -1; padding: 14px 0; color: var(--text-muted); font-size: 11px; text-align: center; }
+.soundboard-item { position: relative; }
+.soundboard-sound-button {
+  width: 100%; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-secondary);
+  background: var(--panel-raised); cursor: pointer; font-size: 10px; text-align: center; overflow: hidden;
+}
+.soundboard-sound-button span:first-child { font-size: 18px; }
+.soundboard-sound-button span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.soundboard-sound-button:hover { border-color: var(--accent); color: var(--text-primary); }
+.soundboard-delete-button {
+  position: absolute; top: -4px; right: -4px; display: none; place-items: center; width: 16px; height: 16px;
+  border: 0; border-radius: 50%; color: #fff; background: var(--danger); cursor: pointer;
+}
+.soundboard-item:hover .soundboard-delete-button { display: grid; }
+.soundboard-panel-footer { padding: 8px 10px 10px; border-top: 1px solid var(--border); }
+.soundboard-add-button {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px;
+  border: 1px dashed var(--border-light); border-radius: var(--radius-sm); color: var(--text-secondary);
+  background: none; cursor: pointer; font-size: 11px;
+}
+.soundboard-add-button:hover { color: var(--text-primary); border-color: var(--accent); }
+.soundboard-upload-form { display: flex; flex-direction: column; gap: 6px; }
+.soundboard-upload-row { display: flex; gap: 6px; }
+.soundboard-emoji-input { width: 40px; height: 30px; padding: 0; border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--panel-raised); text-align: center; font-size: 14px; }
+.soundboard-name-input { min-width: 0; flex: 1; height: 30px; padding: 0 9px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--panel-raised); font-size: 11px; }
+.soundboard-file-picker {
+  position: relative; display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 9px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-sm); color: var(--text-muted);
+  background: var(--panel-raised); cursor: pointer; font-size: 10px; overflow: hidden;
+}
+.soundboard-file-picker span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.soundboard-file-picker input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.soundboard-toast {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-pill);
+  background: rgba(20, 25, 37, .92); color: var(--text-secondary); font-size: 11px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  animation: message-in 200ms cubic-bezier(.16, 1, .3, 1);
+}
+.soundboard-toast strong { color: var(--text-primary); }
+
 /* Markdown de chat — negrito/itálico/sublinhado/tachado herdam o texto ao
    redor; código e spoiler precisam de estilo próprio. */
 .md-inline-code { padding: 1px 4px; border-radius: 3px; color: #e3a8ff; background: rgba(0, 0, 0, .3); font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px; }
