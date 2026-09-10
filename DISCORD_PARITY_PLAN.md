@@ -2,7 +2,7 @@
 
 Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord — app privado, self-hosted, para um grupo fechado de amigos. Atualizar conforme cada item avança. Categorias: `DONE`, `PARTIAL`, `MISSING`, `BLOCKED`, `OPTIONAL`, `PREMIUM`, `EXPERIMENTAL`.
 
-Última análise completa do código: 2026-09-09. Atualizado em 2026-09-09 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8).
+Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário.
 
 ## 0. Arquitetura atual (para não recriar o que já existe)
 
@@ -179,7 +179,7 @@ Tudo `MISSING` ou `BLOCKED` por §1: fóruns, stage channels, eventos, onboardin
 | Bots/apps genéricos (slash commands, webhooks, botões, modals) | `MISSING` — o único "bot" é o SausiMusic, hardcoded, sem framework de apps reutilizável |
 | Comandos de música via texto (`/play`, `!play` etc.) | `DONE` — parser próprio em `packages/shared` |
 | Slash command picker de verdade (UI `/`) | `MISSING` — comandos de música são digitados como texto puro, não há autocomplete/picker |
-| Soundboard | `MISSING` |
+| Soundboard | `DONE` — áudio real via LiveKit (track publicada por quem toca, `Track.Source.Unknown` + name "soundboard", SFU distribui pra sala inteira, sem relay de servidor); upload com validação real de duração (`decodeAudioData`, não só tamanho de arquivo); volume dedicado por ouvinte; sincronização ao vivo via WebSocket; toast de quem tocou o quê via canal de dados do LiveKit. Verificado por script tudo que dava pra verificar sem navegador real (CRUD, validação, broadcast); o caminho de áudio publish/subscribe em si precisa de confirmação ao vivo numa call com mais de uma pessoa. |
 | Webhooks | `MISSING` |
 | Activities (jogos in-call) | `MISSING` |
 
@@ -217,7 +217,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 8. Personalização de perfil — `DONE`
 9. Temas — `DONE`
 10. Sistema Premium completo — `MISSING`
-11. Soundboard — `MISSING`
+11. Soundboard — `DONE` (áudio real via LiveKit; falta confirmação ao vivo do usuário numa call de verdade)
 12. Roles/permissões — `MISSING`
 13. Administração — `MISSING`
 14. Chat completo — `PARTIAL` (texto em tempo real, markdown, edição/exclusão, reações e reply já funcionam; threads/pins/forward/busca/emoji picker completo ainda ausentes)
@@ -228,9 +228,9 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 
 Dado que grande parte do pedido depende da fundação de dados (§1) que não existe, e que o próprio usuário pediu para não trabalhar em tudo simultaneamente, os candidatos a "próximo passo" são:
 
-- **A) Fundação de dados + WebSocket real** — maior alavancagem, mas é trabalho de infraestrutura invisível (sem novidade visual imediata). Necessário antes de roles/permissões/DMs/reações em tempo real/moderação/auditoria.
+- **A) Fundação de dados + WebSocket real** — `DONE` (ver §1). Necessário antes de roles/permissões/DMs/moderação/auditoria.
 - **B) Chat completo no servidor único atual** — markdown, edição/exclusão, reações e reply **já feitos** (ver §8). Falta: pins, forward (depende de DM/multi-servidor), busca, upload de arquivo. Uploads exigem decidir armazenamento (MinIO na própria VPS é a opção mais compatível com a infra atual).
-- **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — depende parcialmente de (A), mas pode ser feito de forma reduzida (cargos globais, sem hierarquia complexa) sem esperar multi-servidor.
-- **D) Soundboard** — item da lista de prioridade especial, tecnicamente isolado (usa a mesma infra de áudio do LiveKit que já existe), não depende de (A).
+- **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — ainda não iniciado. Pode ser feito de forma reduzida (cargos globais, sem hierarquia complexa) sem esperar multi-servidor.
+- **D) Soundboard** — `DONE` (ver §12), pendente só de confirmação ao vivo do usuário numa call real.
 
 Este documento será atualizado a cada sessão de trabalho subsequente com o que foi de fato implementado, testado e implantado — nunca marcar `DONE` sem teste ponta a ponta real, conforme a regra do pedido original.
