@@ -137,3 +137,7 @@ export function SoundboardIcon(props: IconProps) {
 export function UploadIcon(props: IconProps) {
   return <Icon {...props}><path d="M12 16V4M8 8l4-4 4 4" /><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></Icon>;
 }
+
+export function PinIcon(props: IconProps) {
+  return <Icon {...props}><path d="M9 4h6l-.6 6.4L17 13v2h-5v5l-.5 1-.5-1v-5H6v-2l2.6-2.6z" /></Icon>;
+}

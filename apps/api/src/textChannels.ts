@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   MUSIC_BOT_DISPLAY_NAME,
   MUSIC_BOT_IDENTITY,
+  PINNED_MESSAGES_MAX_PER_CHANNEL,
   type MusicNowPlayingCard,
   type TextChannel,
   type TextMessage,
@@ -28,6 +29,7 @@ interface TextMessageRow {
   created_at: number;
   edited_at: number | null;
   reply_to_message_id: string | null;
+  pinned_at: number | null;
 }
 
 interface TextBotMessageRow {
@@ -61,7 +63,8 @@ const listMessagesStatement = db.prepare(`
     messages.text,
     messages.created_at,
     messages.edited_at,
-    messages.reply_to_message_id
+    messages.reply_to_message_id,
+    messages.pinned_at
   FROM text_messages AS messages
   INNER JOIN users ON users.id = messages.sender_id
   WHERE messages.channel_id = ?
@@ -77,7 +80,8 @@ const selectMessageByIdStatement = db.prepare(`
     messages.text,
     messages.created_at,
     messages.edited_at,
-    messages.reply_to_message_id
+    messages.reply_to_message_id,
+    messages.pinned_at
   FROM text_messages AS messages
   INNER JOIN users ON users.id = messages.sender_id
   WHERE messages.id = ? AND messages.channel_id = ?
@@ -86,6 +90,51 @@ const updateMessageStatement = db.prepare(
   'UPDATE text_messages SET text = ?, edited_at = ? WHERE id = ? AND sender_id = ?',
 );
 const deleteMessageStatement = db.prepare('DELETE FROM text_messages WHERE id = ?');
+const pinMessageStatement = db.prepare(
+  'UPDATE text_messages SET pinned_at = ?, pinned_by = ? WHERE id = ? AND channel_id = ?',
+);
+const unpinMessageStatement = db.prepare(
+  'UPDATE text_messages SET pinned_at = NULL, pinned_by = NULL WHERE id = ? AND channel_id = ?',
+);
+const countPinnedStatement = db.prepare(
+  'SELECT COUNT(*) AS count FROM text_messages WHERE channel_id = ? AND pinned_at IS NOT NULL',
+);
+const listPinnedStatement = db.prepare(`
+  SELECT
+    messages.id,
+    messages.channel_id,
+    messages.sender_id,
+    users.username AS sender_name,
+    messages.text,
+    messages.created_at,
+    messages.edited_at,
+    messages.reply_to_message_id,
+    messages.pinned_at
+  FROM text_messages AS messages
+  INNER JOIN users ON users.id = messages.sender_id
+  WHERE messages.channel_id = ? AND messages.pinned_at IS NOT NULL
+  ORDER BY messages.pinned_at DESC
+`);
+// ESCAPE '\' + fuga manual de '%'/'_'/'\' no termo de busca: sem isso, um
+// usuário procurando literalmente por "50%" ou "a_b" teria esses caracteres
+// tratados como curinga do LIKE em vez de texto literal.
+const searchMessagesStatement = db.prepare(`
+  SELECT
+    messages.id,
+    messages.channel_id,
+    messages.sender_id,
+    users.username AS sender_name,
+    messages.text,
+    messages.created_at,
+    messages.edited_at,
+    messages.reply_to_message_id,
+    messages.pinned_at
+  FROM text_messages AS messages
+  INNER JOIN users ON users.id = messages.sender_id
+  WHERE messages.channel_id = ? AND messages.text LIKE ? ESCAPE '\\' COLLATE NOCASE
+  ORDER BY messages.created_at DESC
+  LIMIT ?
+`);
 
 const listBotMessagesStatement = db.prepare(`
   SELECT id, channel_id, sender_name, text, music_card_json, created_at
@@ -131,6 +180,7 @@ function toMessage(row: TextMessageRow): TextMessage {
     sentAt: row.created_at,
     ...(row.edited_at !== null ? { editedAt: row.edited_at } : {}),
     ...(row.reply_to_message_id !== null ? { replyToMessageId: row.reply_to_message_id } : {}),
+    ...(row.pinned_at !== null ? { pinnedAt: row.pinned_at } : {}),
   };
 }
 
@@ -283,6 +333,56 @@ export function deleteTextMessage(
   if (existing.senderId !== requesterId && !canManageMessages) return { ok: false, reason: 'FORBIDDEN' };
   deleteMessageStatement.run(messageId);
   return { ok: true };
+}
+
+export type PinTextMessageResult =
+  | { ok: true; message: TextMessage }
+  | { ok: false; reason: 'NOT_FOUND' | 'ALREADY_PINNED' | 'LIMIT_REACHED' };
+
+export function pinTextMessage(channelId: string, messageId: string, pinnedBy: string): PinTextMessageResult {
+  const existing = getTextMessageById(channelId, messageId);
+  if (!existing) return { ok: false, reason: 'NOT_FOUND' };
+  if (existing.pinnedAt) return { ok: false, reason: 'ALREADY_PINNED' };
+  const pinnedCount = (countPinnedStatement.get(channelId) as { count: number }).count;
+  if (pinnedCount >= PINNED_MESSAGES_MAX_PER_CHANNEL) return { ok: false, reason: 'LIMIT_REACHED' };
+  const pinnedAt = Date.now();
+  pinMessageStatement.run(pinnedAt, pinnedBy, messageId, channelId);
+  return { ok: true, message: { ...existing, pinnedAt } };
+}
+
+export type UnpinTextMessageResult = { ok: true; message: TextMessage } | { ok: false; reason: 'NOT_FOUND' };
+
+export function unpinTextMessage(channelId: string, messageId: string): UnpinTextMessageResult {
+  const existing = getTextMessageById(channelId, messageId);
+  if (!existing || !existing.pinnedAt) return { ok: false, reason: 'NOT_FOUND' };
+  unpinMessageStatement.run(messageId, channelId);
+  const { pinnedAt: _pinnedAt, ...rest } = existing;
+  return { ok: true, message: rest };
+}
+
+export function listPinnedMessages(channelId: string): TextMessage[] {
+  const reactionsByMessage = getReactionsByChannel(channelId);
+  return (listPinnedStatement.all(channelId) as unknown as TextMessageRow[]).map(toMessage).map((message) => {
+    const reactions = reactionsByMessage.get(message.id);
+    return reactions?.length ? { ...message, reactions } : message;
+  });
+}
+
+// Escapa os curingas do LIKE ('%', '_' e o próprio caractere de escape) pra
+// que o termo de busca do usuário seja tratado sempre como texto literal.
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+export function searchTextMessages(channelId: string, query: string, limit = 50): TextMessage[] {
+  const pattern = `%${escapeLikePattern(query)}%`;
+  const reactionsByMessage = getReactionsByChannel(channelId);
+  return (searchMessagesStatement.all(channelId, pattern, limit) as unknown as TextMessageRow[])
+    .map(toMessage)
+    .map((message) => {
+      const reactions = reactionsByMessage.get(message.id);
+      return reactions?.length ? { ...message, reactions } : message;
+    });
 }
 
 export function getMusicBotTextMessage(channelId: string): TextMessage | undefined {

@@ -16,6 +16,9 @@ import {
   DISPLAY_NAME_MIN_LENGTH,
   EVERYONE_ROLE_ID,
   hasPermission,
+  MESSAGE_SEARCH_QUERY_MAX_LENGTH,
+  MESSAGE_SEARCH_QUERY_MIN_LENGTH,
+  MESSAGE_SEARCH_RESULTS_LIMIT,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   Permission,
@@ -68,8 +71,12 @@ import {
   getTextChannelById,
   getTextChannelByName,
   listActiveMusicBotChannelIds,
+  listPinnedMessages,
   listTextChannels,
   listTextMessages,
+  pinTextMessage,
+  searchTextMessages,
+  unpinTextMessage,
 } from './textChannels.js';
 import { addReaction, isValidReactionEmoji, removeReaction } from './reactions.js';
 import { authorizeMusicCommand } from './musicCommands.js';
@@ -274,6 +281,8 @@ const banSchema = z.object({
 });
 
 const voiceKickSchema = z.object({ userId: z.string().min(1) });
+
+const messageSearchQuerySchema = z.string().trim().min(MESSAGE_SEARCH_QUERY_MIN_LENGTH).max(MESSAGE_SEARCH_QUERY_MAX_LENGTH);
 
 function requireSession(request: Request, response: Response, next: NextFunction): void {
   const identity = getSession(request);
@@ -655,6 +664,79 @@ app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, 
   broadcast({ type: 'TEXT_MESSAGE_DELETE', channelId, messageId });
   response.status(204).end();
 });
+
+app.get('/api/text-channels/:channelId/messages/pins', requireSession, (request, response) => {
+  const channelId = request.params.channelId;
+  if (typeof channelId !== 'string' || !getTextChannelById(channelId)) {
+    response.status(404).json({ error: 'Canal de texto não encontrado.' });
+    return;
+  }
+  response.json({ messages: listPinnedMessages(channelId) });
+});
+
+app.get('/api/text-channels/:channelId/messages/search', requireSession, (request, response) => {
+  const channelId = request.params.channelId;
+  if (typeof channelId !== 'string' || !getTextChannelById(channelId)) {
+    response.status(404).json({ error: 'Canal de texto não encontrado.' });
+    return;
+  }
+  const query = messageSearchQuerySchema.safeParse(request.query.q);
+  if (!query.success) {
+    response.status(400).json({ error: `Digite pelo menos ${MESSAGE_SEARCH_QUERY_MIN_LENGTH} caracteres pra buscar.` });
+    return;
+  }
+  response.json({ messages: searchTextMessages(channelId, query.data, MESSAGE_SEARCH_RESULTS_LIMIT) });
+});
+
+app.post(
+  '/api/text-channels/:channelId/messages/:messageId/pin',
+  requireSession,
+  requirePermission(Permission.MANAGE_MESSAGES),
+  textMessageLimiter,
+  (request, response) => {
+    const channelId = request.params.channelId;
+    const messageId = request.params.messageId;
+    if (typeof channelId !== 'string' || typeof messageId !== 'string' || !getTextChannelById(channelId)) {
+      response.status(404).json({ error: 'Canal de texto não encontrado.' });
+      return;
+    }
+    const result = pinTextMessage(channelId, messageId, currentUser(response).id);
+    if (!result.ok) {
+      if (result.reason === 'ALREADY_PINNED') {
+        response.status(409).json({ error: 'Essa mensagem já está fixada.' });
+      } else if (result.reason === 'LIMIT_REACHED') {
+        response.status(409).json({ error: 'Esse canal já atingiu o limite de 50 mensagens fixadas.' });
+      } else {
+        response.status(404).json({ error: 'Mensagem não encontrada.' });
+      }
+      return;
+    }
+    broadcast({ type: 'TEXT_MESSAGE_UPSERT', channelId, message: result.message });
+    response.json({ message: result.message });
+  },
+);
+
+app.delete(
+  '/api/text-channels/:channelId/messages/:messageId/pin',
+  requireSession,
+  requirePermission(Permission.MANAGE_MESSAGES),
+  textMessageLimiter,
+  (request, response) => {
+    const channelId = request.params.channelId;
+    const messageId = request.params.messageId;
+    if (typeof channelId !== 'string' || typeof messageId !== 'string' || !getTextChannelById(channelId)) {
+      response.status(404).json({ error: 'Canal de texto não encontrado.' });
+      return;
+    }
+    const result = unpinTextMessage(channelId, messageId);
+    if (!result.ok) {
+      response.status(404).json({ error: 'Essa mensagem não está fixada.' });
+      return;
+    }
+    broadcast({ type: 'TEXT_MESSAGE_UPSERT', channelId, message: result.message });
+    response.status(204).end();
+  },
+);
 
 app.post(
   '/api/text-channels/:channelId/messages/:messageId/reactions',

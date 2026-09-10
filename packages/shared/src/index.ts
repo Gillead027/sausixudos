@@ -22,6 +22,10 @@ export const SOUNDBOARD_MAX_DURATION_MS = 5_500;
 export const ROLE_NAME_MAX_LENGTH = 32;
 export const BAN_REASON_MAX_LENGTH = 300;
 export const TIMEOUT_MAX_MINUTES = 10_080; // 7 dias, mesmo teto do Discord real.
+export const PINNED_MESSAGES_MAX_PER_CHANNEL = 50; // mesmo teto do Discord real.
+export const MESSAGE_SEARCH_QUERY_MIN_LENGTH = 2;
+export const MESSAGE_SEARCH_QUERY_MAX_LENGTH = CHAT_MESSAGE_MAX_LENGTH;
+export const MESSAGE_SEARCH_RESULTS_LIMIT = 50;
 
 // Cargo automático que todo usuário registrado recebe (não aparece como
 // atribuível manualmente — ver roles.ts). Posição fixa em 0: é sempre o
@@ -541,6 +545,7 @@ export interface TextMessage {
   // vivo, igual o Discord de verdade); se não achar (fora da janela
   // carregada, ou apagada), mostra um placeholder de "mensagem original".
   replyToMessageId?: string;
+  pinnedAt?: number;
 }
 
 // Eventos empurrados pelo WebSocket da API (ver apps/api/src/realtime.ts) —

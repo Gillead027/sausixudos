@@ -148,7 +148,14 @@ ensureColumns('text_messages', [
   // então referenciar uma mensagem que pode ter sido apagada é seguro —
   // basta o app tratar "não encontrada" ao resolver o preview da resposta.
   ['reply_to_message_id', 'TEXT'],
+  ['pinned_at', 'INTEGER'],
+  ['pinned_by', 'TEXT'],
 ]);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_text_messages_channel_pinned
+    ON text_messages(channel_id, pinned_at DESC);
+`);
 
 // Canais de voz eram só o env var VOICE_CHANNELS, parseado no boot (ver
 // config.ts) — agora viram linhas reais, mas sem perder o que já estava

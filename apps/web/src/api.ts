@@ -106,6 +106,21 @@ export const api = {
     request<void>(`/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`, {
       method: 'DELETE',
     }),
+  getPinnedMessages: (channelId: string) =>
+    request<{ messages: TextMessage[] }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages/pins`),
+  pinMessage: (channelId: string, messageId: string) =>
+    request<{ message: TextMessage }>(
+      `/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/pin`,
+      { method: 'POST' },
+    ),
+  unpinMessage: (channelId: string, messageId: string) =>
+    request<void>(`/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/pin`, {
+      method: 'DELETE',
+    }),
+  searchMessages: (channelId: string, query: string) =>
+    request<{ messages: TextMessage[] }>(
+      `/api/text-channels/${encodeURIComponent(channelId)}/messages/search?q=${encodeURIComponent(query)}`,
+    ),
   addReaction: (channelId: string, messageId: string, emoji: ReactionEmoji) =>
     request<void>(
       `/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/reactions`,

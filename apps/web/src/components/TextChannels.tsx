@@ -1,6 +1,9 @@
 import { type FormEvent, type RefObject, useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   CHAT_MESSAGE_MAX_LENGTH,
+  hasPermission,
+  MESSAGE_SEARCH_QUERY_MIN_LENGTH,
+  Permission,
   REACTION_EMOJI,
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
@@ -15,7 +18,7 @@ import { routeTextChannelInput } from '../musicCommandRouting';
 import { onRealtimeConnect, onRealtimeEvent } from '../realtime';
 import { MarkdownText } from './Markdown';
 import { MusicCard } from './MusicCard';
-import { CloseIcon, CopyIcon, EditIcon, MessageIcon, ReplyIcon, SearchIcon, SmileIcon, TrashIcon, VoiceIcon } from './Icons';
+import { CloseIcon, CopyIcon, EditIcon, MessageIcon, PinIcon, ReplyIcon, SearchIcon, SmileIcon, TrashIcon, VoiceIcon } from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 
@@ -266,6 +269,7 @@ function HumanTextMessageRow({
   onReply,
   replyTarget,
   onJumpToMessage,
+  onTogglePin,
 }: {
   message: TextMessage;
   continued: boolean;
@@ -280,13 +284,15 @@ function HumanTextMessageRow({
   onReply: () => void;
   replyTarget: TextMessage | undefined;
   onJumpToMessage: (messageId: string) => void;
+  onTogglePin: () => void;
 }) {
   const avatarUrl = useTextAvatar(message.senderId, session);
   const initial = message.senderName.trim().charAt(0).toUpperCase() || '?';
   const isOwn = message.senderId === session.id;
+  const canManageMessages = hasPermission(session.permissions, Permission.MANAGE_MESSAGES);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   return (
-    <article id={`message-${message.id}`} className={`message text-message ${continued ? 'continued' : ''}`}>
+    <article id={`message-${message.id}`} className={`message text-message ${continued ? 'continued' : ''} ${message.pinnedAt ? 'pinned' : ''}`}>
       <button
         type="button"
         className="message-avatar-trigger"
@@ -314,6 +320,7 @@ function HumanTextMessageRow({
             })}
           </time>
           {message.editedAt && <span className="message-edited-mark" title="Mensagem editada">(editado)</span>}
+          {message.pinnedAt && <span className="message-pinned-mark" title="Mensagem fixada"><PinIcon size={11} /> fixada</span>}
         </header>
         {isEditing ? (
           <MessageEditForm initialText={message.text} onSave={onSaveEdit} onCancel={onCancelEdit} />
@@ -344,15 +351,25 @@ function HumanTextMessageRow({
               />
             )}
           </div>
+          {canManageMessages && (
+            <button
+              type="button"
+              title={message.pinnedAt ? 'Desafixar mensagem' : 'Fixar mensagem'}
+              aria-label={message.pinnedAt ? 'Desafixar mensagem' : 'Fixar mensagem'}
+              onClick={onTogglePin}
+            >
+              <PinIcon size={14} />
+            </button>
+          )}
           {isOwn && (
-            <>
-              <button type="button" title="Editar mensagem" aria-label="Editar mensagem" onClick={onStartEdit}>
-                <EditIcon size={14} />
-              </button>
-              <button type="button" title="Apagar mensagem" aria-label="Apagar mensagem" onClick={onDelete}>
-                <TrashIcon size={14} />
-              </button>
-            </>
+            <button type="button" title="Editar mensagem" aria-label="Editar mensagem" onClick={onStartEdit}>
+              <EditIcon size={14} />
+            </button>
+          )}
+          {(isOwn || canManageMessages) && (
+            <button type="button" title="Apagar mensagem" aria-label="Apagar mensagem" onClick={onDelete}>
+              <TrashIcon size={14} />
+            </button>
           )}
         </div>
       )}
@@ -375,6 +392,7 @@ function TextMessageRow(props: {
   onReply: () => void;
   replyTarget: TextMessage | undefined;
   onJumpToMessage: (messageId: string) => void;
+  onTogglePin: () => void;
 }) {
   return props.message.senderType === 'BOT'
     ? <BotTextMessageRow message={props.message} onMusicCommand={props.onMusicCommand} />
@@ -393,8 +411,121 @@ function TextMessageRow(props: {
         onReply={props.onReply}
         replyTarget={props.replyTarget}
         onJumpToMessage={props.onJumpToMessage}
+        onTogglePin={props.onTogglePin}
       />
     );
+}
+
+function PinnedMessagesPanel({
+  messages,
+  canManageMessages,
+  onJump,
+  onUnpin,
+}: {
+  messages: TextMessage[];
+  canManageMessages: boolean;
+  onJump: (messageId: string) => void;
+  onUnpin: (message: TextMessage) => void;
+}) {
+  return (
+    <div className="channel-side-panel pinned-messages-panel" role="region" aria-label="Mensagens fixadas">
+      <header><PinIcon size={13} /><strong>Mensagens fixadas</strong><span>{messages.length}</span></header>
+      {messages.length === 0 ? (
+        <p className="channel-side-panel-empty">Nenhuma mensagem fixada neste canal ainda.</p>
+      ) : (
+        <div className="channel-side-panel-list">
+          {messages.map((message) => (
+            <div className="pinned-message-row" key={message.id}>
+              <button type="button" className="pinned-message-body" onClick={() => onJump(message.id)}>
+                <strong>{message.senderName}</strong>
+                <span>{message.text}</span>
+              </button>
+              {canManageMessages && (
+                <button type="button" className="pinned-message-unpin" title="Desafixar" aria-label="Desafixar" onClick={() => onUnpin(message)}>
+                  <CloseIcon size={12} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessageSearchPanel({
+  channelId,
+  onJump,
+  loadedMessageIds,
+}: {
+  channelId: string;
+  onJump: (messageId: string) => void;
+  loadedMessageIds: Set<string>;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<TextMessage[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+
+  async function runSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = query.trim();
+    if (trimmed.length < MESSAGE_SEARCH_QUERY_MIN_LENGTH || searching) return;
+    setSearching(true);
+    try {
+      const { messages } = await api.searchMessages(channelId, trimmed);
+      setResults(messages);
+      setSearched(true);
+    } catch {
+      setResults([]);
+      setSearched(true);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  return (
+    <div className="channel-side-panel message-search-panel" role="region" aria-label="Buscar mensagens">
+      <form onSubmit={runSearch}>
+        <SearchIcon size={13} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={`Buscar (mín. ${MESSAGE_SEARCH_QUERY_MIN_LENGTH} caracteres)`}
+          autoFocus
+        />
+        <button type="submit" disabled={query.trim().length < MESSAGE_SEARCH_QUERY_MIN_LENGTH || searching}>
+          {searching ? 'Buscando…' : 'Buscar'}
+        </button>
+      </form>
+      {searched && (
+        results.length === 0 ? (
+          <p className="channel-side-panel-empty">Nenhuma mensagem encontrada.</p>
+        ) : (
+          <div className="channel-side-panel-list">
+            {results.map((message) => (
+              <button
+                type="button"
+                key={message.id}
+                className="search-result-row"
+                onClick={() => loadedMessageIds.has(message.id) && onJump(message.id)}
+                disabled={!loadedMessageIds.has(message.id)}
+                title={loadedMessageIds.has(message.id) ? 'Ir para a mensagem' : 'Fora da janela carregada de mensagens recentes'}
+              >
+                <div className="search-result-meta">
+                  <strong>{message.senderName}</strong>
+                  <time>
+                    {new Date(message.sentAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  </time>
+                </div>
+                <span>{message.text}</span>
+              </button>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
 }
 
 export function TextChannelView({
@@ -418,9 +549,13 @@ export function TextChannelView({
   const [feedback, setFeedback] = useState<MusicCommandResponse | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<TextMessage | null>(null);
+  const [pinsOpen, setPinsOpen] = useState(false);
+  const [pinnedMessages, setPinnedMessages] = useState<TextMessage[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isTimedOut = Boolean(session.timeoutUntil && session.timeoutUntil > Date.now());
+  const canManageMessages = hasPermission(session.permissions, Permission.MANAGE_MESSAGES);
 
   // Só destaca visualmente se a mensagem original estiver na janela já
   // carregada (até 100 mensagens) — sem isso, não há pra onde rolar.
@@ -465,6 +600,29 @@ export function TextChannelView({
     }
   }
 
+  async function togglePin(message: TextMessage) {
+    try {
+      if (message.pinnedAt) {
+        await api.unpinMessage(channel.id, message.id);
+        const { pinnedAt: _pinnedAt, ...unpinned } = message;
+        setMessages((current) => applyIncomingMessage(current, unpinned));
+        setPinnedMessages((current) => current.filter(({ id }) => id !== message.id));
+      } else {
+        const { message: pinned } = await api.pinMessage(channel.id, message.id);
+        setMessages((current) => applyIncomingMessage(current, pinned));
+        setPinnedMessages((current) => [pinned, ...current]);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Não foi possível fixar/desafixar a mensagem.');
+    }
+  }
+
+  function refreshPinnedMessages() {
+    void api.getPinnedMessages(channel.id).then(({ messages: pinned }) => setPinnedMessages(pinned)).catch(() => {
+      // Painel simplesmente mostra a última lista conhecida.
+    });
+  }
+
   useEffect(() => {
     let active = true;
     let requestRunning = false;
@@ -475,6 +633,9 @@ export function TextChannelView({
     setFeedback(null);
     setEditingMessageId(null);
     setReplyingTo(null);
+    setPinsOpen(false);
+    setPinnedMessages([]);
+    setSearchOpen(false);
 
     const refresh = async () => {
       if (requestRunning) return;
@@ -507,14 +668,25 @@ export function TextChannelView({
   }, [channel.id]);
 
   useEffect(() => {
+    if (pinsOpen) refreshPinnedMessages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinsOpen, channel.id]);
+
+  useEffect(() => {
     return onRealtimeEvent((event) => {
       if (event.type === 'TEXT_MESSAGE_CREATE' || event.type === 'TEXT_MESSAGE_UPSERT') {
         if (event.channelId !== channel.id) return;
         setMessages((current) => applyIncomingMessage(current, event.message));
         window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }));
+        setPinnedMessages((current) => {
+          const wasPinned = current.some(({ id }) => id === event.message.id);
+          if (event.message.pinnedAt) return applyIncomingMessage(current, event.message);
+          return wasPinned ? current.filter(({ id }) => id !== event.message.id) : current;
+        });
       } else if (event.type === 'TEXT_MESSAGE_DELETE') {
         if (event.channelId !== channel.id) return;
         setMessages((current) => current.filter(({ id }) => id !== event.messageId));
+        setPinnedMessages((current) => current.filter(({ id }) => id !== event.messageId));
       } else if (event.type === 'TEXT_MESSAGE_REACTION_ADD' || event.type === 'TEXT_MESSAGE_REACTION_REMOVE') {
         if (event.channelId !== channel.id) return;
         const action = event.type === 'TEXT_MESSAGE_REACTION_ADD' ? 'add' : 'remove';
@@ -569,6 +741,44 @@ export function TextChannelView({
 
   return (
     <section className="text-channel-view" aria-label={`Canal de texto ${channel.name}`}>
+      <div className="text-channel-toolbar">
+        <button
+          type="button"
+          className={`icon-button ${pinsOpen ? 'selected' : ''}`}
+          title="Mensagens fixadas"
+          aria-label="Mensagens fixadas"
+          onClick={() => {
+            setPinsOpen((open) => !open);
+            setSearchOpen(false);
+          }}
+        >
+          <PinIcon size={15} />
+        </button>
+        <button
+          type="button"
+          className={`icon-button ${searchOpen ? 'selected' : ''}`}
+          title="Buscar mensagens"
+          aria-label="Buscar mensagens"
+          onClick={() => {
+            setSearchOpen((open) => !open);
+            setPinsOpen(false);
+          }}
+        >
+          <SearchIcon size={15} />
+        </button>
+      </div>
+      {pinsOpen && (
+        <PinnedMessagesPanel
+          messages={pinnedMessages}
+          canManageMessages={canManageMessages}
+          onJump={(messageId) => {
+            jumpToMessage(messageId);
+            setPinsOpen(false);
+          }}
+          onUnpin={(message) => void togglePin(message)}
+        />
+      )}
+      {searchOpen && <MessageSearchPanel channelId={channel.id} onJump={jumpToMessage} loadedMessageIds={new Set(messages.map(({ id }) => id))} />}
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
       {feedback && <div className="music-command-feedback" role="status"><span>{feedback.message}</span>{feedback.nowPlaying && <MusicCard card={feedback.nowPlaying} />}</div>}
       <div
@@ -611,6 +821,7 @@ export function TextChannelView({
               }}
               replyTarget={message.replyToMessageId ? messages.find(({ id }) => id === message.replyToMessageId) : undefined}
               onJumpToMessage={jumpToMessage}
+              onTogglePin={() => void togglePin(message)}
               onMusicCommand={async (commandText) => {
                 if (!voiceChannelId) {
                   throw new Error('Você precisa estar em um canal de voz para usar os controles do SausiMusic.');
