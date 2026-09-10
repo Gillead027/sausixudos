@@ -2,7 +2,7 @@
 
 Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord — app privado, self-hosted, para um grupo fechado de amigos. Atualizar conforme cada item avança. Categorias: `DONE`, `PARTIAL`, `MISSING`, `BLOCKED`, `OPTIONAL`, `PREMIUM`, `EXPERIMENTAL`.
 
-Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário; (6) cargos, permissões e moderação básica — kick/ban/timeout (ver §1, §14, §15).
+Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário; (6) cargos, permissões e moderação básica — kick/ban/timeout (ver §1, §14, §15); (7) mensagens fixadas e busca por canal (ver §8).
 
 ## 0. Arquitetura atual (para não recriar o que já existe)
 
@@ -134,13 +134,13 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Status personalizado (emoji+texto+duração) | `MISSING` |
 | Atividade (jogo/Spotify) | `DONE` — implementado nesta sessão inteira (detecção real via `ps-list`+`windows-media-sessions`, sem simulação) |
 | Notificações (sistema/push) | `MISSING` |
-| Busca de mensagens | `MISSING` |
+| Busca de mensagens | `DONE` (por canal) — `GET /api/text-channels/:id/messages/search?q=`, `LIKE` parametrizado com fuga manual de `%`/`_`/`\`; sem busca cross-canal/cross-servidor (não existe ainda). |
 | Inbox/caixa de entrada | `MISSING` |
 | Reações | `DONE` — paleta curada de 8 emojis unicode (sem picker completo de busca/categorias ainda), tempo real via WebSocket, `apps/api/src/reactions.ts`. Super Reaction animada (Premium) continua `MISSING`. |
 | Threads | `MISSING` |
 | Enquetes | `MISSING` |
-| Edição/exclusão de mensagem | `DONE` — só o próprio autor (sem cargos ainda pra moderação de terceiros); `PATCH`/`DELETE /api/text-channels/:id/messages/:id`, indicador "(editado)", tempo real via WebSocket. |
-| Pins | `MISSING` |
+| Edição/exclusão de mensagem | `DONE` — autor sempre pode; quem tem o cargo com `MANAGE_MESSAGES` também pode apagar mensagem de outro (não editar, igual Discord real); `PATCH`/`DELETE /api/text-channels/:id/messages/:id`, indicador "(editado)", tempo real via WebSocket. |
+| Pins | `DONE` — `POST`/`DELETE /api/text-channels/:id/messages/:id/pin`, exige `MANAGE_MESSAGES`, teto de 50 por canal (mesmo do Discord real), painel "Mensagens fixadas" na UI, tempo real via WebSocket (reaproveita `TEXT_MESSAGE_UPSERT`). |
 | Reply | `DONE` — só guarda o id da mensagem original (não um snapshot congelado), resolvido contra o que já está carregado na conversa; mostra placeholder honesto se não encontrar. Clique no preview pula/destaca a original. |
 | Forward (encaminhar pra outro canal/DM) | `MISSING` — ainda não existe DM. |
 | Markdown (negrito/itálico/negrito+itálico/sublinhado/tachado/spoiler/código inline/bloco de código/autolink) | `DONE` — renderizador próprio em `apps/web/src/components/Markdown.tsx`, monta árvore de elementos React (nunca `dangerouslySetInnerHTML`), 15 testes unitários cobrindo formatação e segurança contra XSS. Faltam: escape com barra invertida, citações (`>`), listas. |
@@ -220,7 +220,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 11. Soundboard — `DONE` (áudio real via LiveKit; falta confirmação ao vivo do usuário numa call de verdade)
 12. Roles/permissões — `DONE` (globais, sem hierarquia completa de servidor — ver §1)
 13. Administração — `DONE` (básica: kick da voz, timeout, ban/desban, cargos — via aba "Membros"/"Cargos"; sem painel dedicado nem audit log, ver §14)
-14. Chat completo — `PARTIAL` (texto em tempo real, markdown, edição/exclusão, reações e reply já funcionam; threads/pins/forward/busca/emoji picker completo ainda ausentes)
+14. Chat completo — `PARTIAL` (texto em tempo real, markdown, edição/exclusão, reações, reply, pins e busca por canal já funcionam; threads/forward/emoji picker completo/upload de arquivo ainda ausentes)
 
 ---
 
@@ -229,10 +229,10 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 Dado que grande parte do pedido depende da fundação de dados (§1) que não existe, e que o próprio usuário pediu para não trabalhar em tudo simultaneamente, os candidatos a "próximo passo" são:
 
 - **A) Fundação de dados + WebSocket real** — `DONE` (ver §1). Necessário antes de roles/permissões/DMs/moderação/auditoria.
-- **B) Chat completo no servidor único atual** — markdown, edição/exclusão, reações e reply **já feitos** (ver §8). Falta: pins, forward (depende de DM/multi-servidor), busca, upload de arquivo. Uploads exigem decidir armazenamento (MinIO na própria VPS é a opção mais compatível com a infra atual).
+- **B) Chat completo no servidor único atual** — markdown, edição/exclusão, reações, reply, pins e busca por canal **já feitos** (ver §8). Falta: forward (depende de DM/multi-servidor, `BLOCKED` por §1), emoji picker completo, upload de arquivo (exige decidir armazenamento — MinIO na própria VPS é a opção mais compatível com a infra atual).
 - **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — `DONE` (ver §1, §14, §15). Cargos globais reais, bitfield de permissões, hierarquia por posição, kick/ban/timeout com força de desconexão real, aba "Cargos"/"Membros" funcional. Verificado com 28 checagens de E2E real (dois usuários, WebSocket, banco) e confirmado em produção logo após o deploy. Pendente só de uma passada visual/UX do usuário nas novas telas (não dá pra abrir navegador a partir deste ambiente).
 - **D) Soundboard** — `DONE` (ver §12), pendente só de confirmação ao vivo do usuário numa call real.
 
-Com A, C e D feitos, o que resta de maior impacto é (B) fechar o chat (pins/forward/busca/upload) ou avançar a fundação maior (`servers`, `server_members`, amigos/DMs) que ainda bloqueia múltiplos servidores, convites reais e boa parte do FASE 7/8.
+Com A, C e D feitos e B quase fechado (só falta upload de arquivo, emoji picker completo e forward — os dois últimos de baixo valor isolado ou bloqueados), o que resta de maior impacto agora é: (1) upload de arquivo/imagem em mensagem, que exige decidir armazenamento de objetos antes de começar; ou (2) avançar a fundação maior (`servers`, `server_members`, amigos/DMs) que ainda bloqueia múltiplos servidores, convites reais, forward e boa parte do FASE 7/8 — esse é o trabalho de maior volume que resta no pedido original.
 
 Este documento será atualizado a cada sessão de trabalho subsequente com o que foi de fato implementado, testado e implantado — nunca marcar `DONE` sem teste ponta a ponta real, conforme a regra do pedido original.
