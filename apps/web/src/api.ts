@@ -3,6 +3,7 @@ import type {
   BanRecord,
   LiveKitTokenResponse,
   MemberSummary,
+  MessageAttachment,
   MusicCommandResponse,
   PublicConfig,
   ReactionEmoji,
@@ -35,6 +36,20 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 
   if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
+
+// Não reaproveita request(): FormData precisa que o navegador defina o
+// Content-Type sozinho (com o boundary do multipart) — forçar
+// 'application/json', como o helper acima faz, quebraria o upload.
+async function uploadFile<T>(path: string, file: File): Promise<T> {
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch(path, { method: 'POST', credentials: 'include', body });
+  if (!response.ok) {
+    const responseBody = (await response.json().catch(() => ({}))) as ApiErrorBody;
+    throw new Error(responseBody.error || `Falha no envio do arquivo (${response.status}).`);
+  }
   return response.json() as Promise<T>;
 }
 
@@ -92,11 +107,17 @@ export const api = {
     request<void>(`/api/voice-channels/${encodeURIComponent(channelId)}`, { method: 'DELETE' }),
   getTextMessages: (channelId: string) =>
     request<{ messages: TextMessage[] }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages`),
-  sendTextMessage: (channelId: string, text: string, replyToMessageId?: string) =>
+  sendTextMessage: (channelId: string, text: string, replyToMessageId?: string, attachmentIds?: string[]) =>
     request<{ message: TextMessage }>(`/api/text-channels/${encodeURIComponent(channelId)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ text, ...(replyToMessageId ? { replyToMessageId } : {}) }),
+      body: JSON.stringify({
+        text,
+        ...(replyToMessageId ? { replyToMessageId } : {}),
+        ...(attachmentIds?.length ? { attachmentIds } : {}),
+      }),
     }),
+  uploadAttachment: (channelId: string, file: File) =>
+    uploadFile<{ attachment: MessageAttachment }>(`/api/text-channels/${encodeURIComponent(channelId)}/attachments`, file),
   editTextMessage: (channelId: string, messageId: string, text: string) =>
     request<{ message: TextMessage }>(
       `/api/text-channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`,

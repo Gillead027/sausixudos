@@ -7,6 +7,7 @@ import {
   type TextChannel,
   type TextMessage,
 } from '@sausixudos/shared';
+import { attachToMessage, getAttachmentsByChannel, getAttachmentsForMessage } from './attachments.js';
 import { db } from './db.js';
 import { getReactionsByChannel, getReactionsForMessage } from './reactions.js';
 import { slugify } from './slug.js';
@@ -247,11 +248,17 @@ export function createTextChannel(
 
 export function listTextMessages(channelId: string, limit = 100): TextMessage[] {
   const reactionsByMessage = getReactionsByChannel(channelId);
+  const attachmentsByMessage = getAttachmentsByChannel(channelId);
   const humanMessages = (listMessagesStatement.all(channelId, limit) as unknown as TextMessageRow[])
     .map(toMessage)
     .map((message) => {
       const reactions = reactionsByMessage.get(message.id);
-      return reactions?.length ? { ...message, reactions } : message;
+      const attachments = attachmentsByMessage.get(message.id);
+      return {
+        ...message,
+        ...(reactions?.length ? { reactions } : {}),
+        ...(attachments?.length ? { attachments } : {}),
+      };
     });
   const botMessages = (listBotMessagesStatement.all(channelId, limit) as unknown as TextBotMessageRow[])
     .map(toBotMessage);
@@ -265,6 +272,7 @@ export function createTextMessage(
   text: string,
   sender: UserRecord,
   replyToMessageId?: string,
+  attachmentIds?: string[],
 ): TextMessage {
   const message: TextMessage = {
     id: randomUUID(),
@@ -284,6 +292,10 @@ export function createTextMessage(
     message.sentAt,
     replyToMessageId ?? null,
   );
+  if (attachmentIds?.length) {
+    const attachments = attachToMessage(attachmentIds, message.id, channelId, sender.id);
+    if (attachments.length) message.attachments = attachments;
+  }
   return message;
 }
 
@@ -293,7 +305,12 @@ export function getTextMessageById(channelId: string, messageId: string): TextMe
   if (!row) return undefined;
   const message = toMessage(row);
   const reactions = getReactionsForMessage(messageId);
-  return reactions.length ? { ...message, reactions } : message;
+  const attachments = getAttachmentsForMessage(messageId);
+  return {
+    ...message,
+    ...(reactions.length ? { reactions } : {}),
+    ...(attachments.length ? { attachments } : {}),
+  };
 }
 
 export type EditTextMessageResult =

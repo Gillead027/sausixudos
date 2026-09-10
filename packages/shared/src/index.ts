@@ -26,6 +26,16 @@ export const PINNED_MESSAGES_MAX_PER_CHANNEL = 50; // mesmo teto do Discord real
 export const MESSAGE_SEARCH_QUERY_MIN_LENGTH = 2;
 export const MESSAGE_SEARCH_QUERY_MAX_LENGTH = CHAT_MESSAGE_MAX_LENGTH;
 export const MESSAGE_SEARCH_RESULTS_LIMIT = 50;
+export const ATTACHMENT_MAX_SIZE_BYTES = 15 * 1024 * 1024; // 15MB — teto razoável pra uma VPS pequena.
+export const ATTACHMENT_MAX_PER_MESSAGE = 5;
+export const ATTACHMENT_FILENAME_MAX_LENGTH = 200;
+// Únicos tipos servidos com Content-Disposition: inline (renderizados como
+// <img>). Qualquer outro tipo, mesmo que o navegador reporte um desses no
+// upload, é servido como download forçado (ver apps/api/src/index.ts) — é
+// essa política no momento de SERVIR, não no upload, que evita servir um
+// arquivo malicioso (ex.: SVG com <script>) como HTML/SVG a partir da nossa
+// própria origem.
+export const ATTACHMENT_INLINE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 
 // Cargo automático que todo usuário registrado recebe (não aparece como
 // atribuível manualmente — ver roles.ts). Posição fixa em 0: é sempre o
@@ -510,6 +520,16 @@ export interface SoundboardAnnouncement {
   emoji: string;
 }
 
+export interface MessageAttachment {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  // Caminho relativo (mesma origem) — GET /api/attachments/:id/:filename,
+  // decide inline vs. download forçado no servidor conforme contentType.
+  url: string;
+}
+
 export interface TextChannel {
   id: string;
   name: string;
@@ -546,6 +566,7 @@ export interface TextMessage {
   // carregada, ou apagada), mostra um placeholder de "mensagem original".
   replyToMessageId?: string;
   pinnedAt?: number;
+  attachments?: MessageAttachment[];
 }
 
 // Eventos empurrados pelo WebSocket da API (ver apps/api/src/realtime.ts) —

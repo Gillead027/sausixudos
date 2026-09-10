@@ -141,3 +141,11 @@ export function UploadIcon(props: IconProps) {
 export function PinIcon(props: IconProps) {
   return <Icon {...props}><path d="M9 4h6l-.6 6.4L17 13v2h-5v5l-.5 1-.5-1v-5H6v-2l2.6-2.6z" /></Icon>;
 }
+
+export function AttachmentIcon(props: IconProps) {
+  return <Icon {...props}><path d="M17.5 8.5 10 16a3.2 3.2 0 0 1-4.5-4.5l8-8a2.2 2.2 0 0 1 3.1 3.1l-7.6 7.6a1.2 1.2 0 0 1-1.7-1.7l6.9-6.9" /></Icon>;
+}
+
+export function FileIcon(props: IconProps) {
+  return <Icon {...props}><path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" /><path d="M14 3v4h4" /></Icon>;
+}

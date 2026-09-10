@@ -1,12 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { AccessToken, RoomServiceClient, TrackSource, WebhookReceiver } from 'livekit-server-sdk';
+import multer, { MulterError } from 'multer';
 import { z } from 'zod';
 import {
   ACCENT_COLORS,
   MUSIC_BOT_IDENTITY,
+  ATTACHMENT_INLINE_IMAGE_TYPES,
+  ATTACHMENT_MAX_PER_MESSAGE,
+  ATTACHMENT_MAX_SIZE_BYTES,
   AVATAR_DATA_URL_MAX_LENGTH,
   BAN_REASON_MAX_LENGTH,
   BANNER_DATA_URL_MAX_LENGTH,
@@ -92,6 +97,15 @@ import {
 } from './voiceChannels.js';
 import { createSoundboardSound, deleteSoundboardSound, getSoundboardSoundById, listSoundboardSounds } from './soundboard.js';
 import {
+  createPendingAttachment,
+  deleteAttachmentRecord,
+  getAttachmentRecordById,
+  getAttachmentRecordsForMessage,
+  listOrphanedAttachments,
+  sanitizeFilename,
+} from './attachments.js';
+import { deleteAttachmentObject, ensureAttachmentsBucket, getAttachmentObjectStream, uploadAttachmentObject } from './storage.js';
+import {
   assignDefaultRole,
   assignRole,
   createRole,
@@ -175,6 +189,37 @@ const moderationLimiter = rateLimit({
   message: { error: 'Muitas ações de moderação em pouco tempo.' },
 });
 
+const uploadLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Muitos envios de arquivo em pouco tempo.' },
+});
+
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ATTACHMENT_MAX_SIZE_BYTES, files: 1 },
+});
+
+// Envolve o middleware do multer manualmente pra devolver um erro amigável
+// (413 com o teto real) em vez de cair no handler de erro genérico do fim
+// do arquivo — multer chama next(error) em vez de lançar, e um MulterError
+// por tamanho de arquivo merece uma resposta diferente de um 500 qualquer.
+function handleAttachmentUpload(request: Request, response: Response, next: NextFunction): void {
+  attachmentUpload.single('file')(request, response, (error: unknown) => {
+    if (!error) {
+      next();
+      return;
+    }
+    if (error instanceof MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      response.status(413).json({ error: `Arquivo muito grande — máximo de ${Math.floor(ATTACHMENT_MAX_SIZE_BYTES / 1024 / 1024)}MB.` });
+      return;
+    }
+    response.status(400).json({ error: 'Não foi possível processar o arquivo enviado.' });
+  });
+}
+
 const usernameSchema = z
   .string()
   .trim()
@@ -244,8 +289,12 @@ const channelSchema = z.object({
 });
 
 const textMessageSchema = z.object({
-  text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH),
+  // Sem mínimo aqui de propósito: uma mensagem só de anexo (imagem sem
+  // legenda, igual Discord real) é válida — a checagem "tem que ter texto OU
+  // anexo" é feita na própria rota, depois de validar isto.
+  text: z.string().trim().max(CHAT_MESSAGE_MAX_LENGTH),
   replyToMessageId: z.string().min(1).max(64).optional(),
+  attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_MAX_PER_MESSAGE).optional(),
 });
 
 const reactionSchema = z.object({
@@ -595,8 +644,8 @@ app.post(
       response.status(404).json({ error: 'Canal de texto não encontrado.' });
       return;
     }
-    if (!body.success) {
-      response.status(400).json({ error: 'A mensagem deve ter entre 1 e 500 caracteres.' });
+    if (!body.success || (!body.data.text && !body.data.attachmentIds?.length)) {
+      response.status(400).json({ error: 'Envie um texto (até 500 caracteres) ou pelo menos um anexo.' });
       return;
     }
     if (body.data.replyToMessageId && !getTextMessageById(channelId, body.data.replyToMessageId)) {
@@ -605,7 +654,13 @@ app.post(
     }
     if (rejectIfTimedOut(currentUser(response), response)) return;
 
-    const message = createTextMessage(channelId, body.data.text, currentUser(response), body.data.replyToMessageId);
+    const message = createTextMessage(
+      channelId,
+      body.data.text,
+      currentUser(response),
+      body.data.replyToMessageId,
+      body.data.attachmentIds,
+    );
     broadcast({ type: 'TEXT_MESSAGE_CREATE', channelId, message });
     response.status(201).json({ message });
   },
@@ -623,7 +678,7 @@ app.patch(
       response.status(404).json({ error: 'Canal de texto não encontrado.' });
       return;
     }
-    if (!body.success) {
+    if (!body.success || !body.data.text) {
       response.status(400).json({ error: 'A mensagem deve ter entre 1 e 500 caracteres.' });
       return;
     }
@@ -642,7 +697,7 @@ app.patch(
   },
 );
 
-app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, (request, response) => {
+app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, async (request, response) => {
   const channelId = request.params.channelId;
   const messageId = request.params.messageId;
   if (typeof channelId !== 'string' || typeof messageId !== 'string' || !getTextChannelById(channelId)) {
@@ -652,6 +707,10 @@ app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, 
 
   const user = currentUser(response);
   const canManageMessages = hasPermission(getUserPermissionBitfield(user.id), Permission.MANAGE_MESSAGES);
+  // Captura os anexos ANTES de apagar — o ON DELETE CASCADE já limpa as
+  // linhas de message_attachments junto com a mensagem, então depois não
+  // haveria mais como saber quais objetos existiam no MinIO pra remover.
+  const attachments = getAttachmentRecordsForMessage(messageId);
   const result = deleteTextMessage(channelId, messageId, user.id, canManageMessages);
   if (!result.ok) {
     if (result.reason === 'FORBIDDEN') {
@@ -661,6 +720,13 @@ app.delete('/api/text-channels/:channelId/messages/:messageId', requireSession, 
     }
     return;
   }
+  await Promise.all(
+    attachments.map((attachment) =>
+      deleteAttachmentObject(attachment.objectKey).catch((error) => {
+        console.error(`Falha ao remover objeto de anexo ${attachment.objectKey} do MinIO:`, error);
+      }),
+    ),
+  );
   broadcast({ type: 'TEXT_MESSAGE_DELETE', channelId, messageId });
   response.status(204).end();
 });
@@ -686,6 +752,101 @@ app.get('/api/text-channels/:channelId/messages/search', requireSession, (reques
     return;
   }
   response.json({ messages: searchTextMessages(channelId, query.data, MESSAGE_SEARCH_RESULTS_LIMIT) });
+});
+
+// Upload em duas etapas (igual o fluxo real do Discord): o arquivo sobe
+// pra cá primeiro e fica "pendente" (message_id NULL, ver attachments.ts),
+// o cliente já pode pré-visualizar via o mesmo GET /api/attachments/:id/...
+// abaixo, e só quando a mensagem de verdade é enviada (POST .../messages
+// com attachmentIds) é que o anexo é vinculado. Uploads nunca vinculados são
+// varridos periodicamente (ver setInterval mais abaixo).
+app.post(
+  '/api/text-channels/:channelId/attachments',
+  requireSession,
+  uploadLimiter,
+  handleAttachmentUpload,
+  async (request, response) => {
+    const channelId = request.params.channelId;
+    if (typeof channelId !== 'string' || !getTextChannelById(channelId)) {
+      response.status(404).json({ error: 'Canal de texto não encontrado.' });
+      return;
+    }
+    const user = currentUser(response);
+    if (rejectIfTimedOut(user, response)) return;
+    if (!request.file) {
+      response.status(400).json({ error: 'Nenhum arquivo enviado.' });
+      return;
+    }
+
+    const filename = sanitizeFilename(request.file.originalname);
+    const contentType = request.file.mimetype || 'application/octet-stream';
+    const objectKey = `${randomUUID()}/${filename}`;
+    try {
+      await uploadAttachmentObject(objectKey, request.file.buffer, contentType);
+    } catch (error) {
+      console.error('Falha ao enviar anexo para o storage de objetos:', error);
+      response.status(503).json({ error: 'Não foi possível enviar o arquivo agora. Tente novamente.' });
+      return;
+    }
+
+    const attachment = createPendingAttachment({
+      channelId,
+      objectKey,
+      filename,
+      contentType,
+      sizeBytes: request.file.size,
+      uploadedBy: user.id,
+    });
+    response.status(201).json({
+      attachment: {
+        id: attachment.id,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        sizeBytes: attachment.sizeBytes,
+        url: `/api/attachments/${attachment.id}/${encodeURIComponent(attachment.filename)}`,
+      },
+    });
+  },
+);
+
+function buildContentDisposition(disposition: 'inline' | 'attachment', filename: string): string {
+  const asciiFallback = filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, "'");
+  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+// Serve tanto anexos já vinculados a uma mensagem (qualquer autenticado pode
+// ver, igual o resto do chat) quanto o próprio upload pendente de quem
+// acabou de enviar (pré-visualização antes de mandar a mensagem). Decide
+// inline vs. download forçado no servidor, nunca confiando no que o cliente
+// pediu — é essa política que evita servir um arquivo malicioso disfarçado
+// de imagem como HTML/SVG a partir da nossa própria origem (ver
+// ATTACHMENT_INLINE_IMAGE_TYPES no pacote compartilhado).
+app.get('/api/attachments/:attachmentId/:filename', requireSession, async (request, response) => {
+  const attachmentId = request.params.attachmentId;
+  const attachment = typeof attachmentId === 'string' ? getAttachmentRecordById(attachmentId) : undefined;
+  const user = currentUser(response);
+  if (!attachment || (attachment.messageId === null && attachment.uploadedBy !== user.id)) {
+    response.status(404).json({ error: 'Anexo não encontrado.' });
+    return;
+  }
+
+  try {
+    const objectStream = await getAttachmentObjectStream(attachment.objectKey);
+    const inline = (ATTACHMENT_INLINE_IMAGE_TYPES as readonly string[]).includes(attachment.contentType);
+    response.setHeader('Content-Type', attachment.contentType);
+    response.setHeader('Content-Length', attachment.sizeBytes);
+    response.setHeader('Content-Disposition', buildContentDisposition(inline ? 'inline' : 'attachment', attachment.filename));
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    objectStream.on('error', (error) => {
+      console.error(`Falha ao ler objeto de anexo ${attachment.objectKey} do storage:`, error);
+      if (!response.headersSent) response.status(503).end();
+    });
+    objectStream.pipe(response);
+  } catch (error) {
+    console.error(`Falha ao buscar anexo ${attachment.objectKey} no storage:`, error);
+    response.status(503).json({ error: 'Não foi possível carregar o arquivo agora.' });
+  }
 });
 
 app.post(
@@ -1475,7 +1636,21 @@ setInterval(() => {
   }
 }, MUSIC_CARD_RESYNC_INTERVAL_MS);
 
+const ORPHANED_ATTACHMENT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 horas
+const ORPHANED_ATTACHMENT_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
+// Arquivo escolhido/enviado mas cuja mensagem nunca foi mandada (usuário
+// fechou a aba, trocou de canal, etc.) fica "pendente" pra sempre se
+// ninguém limpar — varre e apaga tanto a linha quanto o objeto no MinIO.
+setInterval(() => {
+  for (const attachment of listOrphanedAttachments(ORPHANED_ATTACHMENT_MAX_AGE_MS)) {
+    deleteAttachmentObject(attachment.objectKey)
+      .catch((error) => console.error(`Falha ao limpar anexo órfão ${attachment.objectKey}:`, error))
+      .finally(() => deleteAttachmentRecord(attachment.id));
+  }
+}, ORPHANED_ATTACHMENT_SWEEP_INTERVAL_MS);
+
 const server = app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`Sausixudos API ouvindo na porta ${config.PORT}`);
 });
+void ensureAttachmentsBucket();
 attachRealtime(server);

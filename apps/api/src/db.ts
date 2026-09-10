@@ -105,6 +105,26 @@ db.exec(`
     banned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
     created_at INTEGER NOT NULL
   );
+
+  -- message_id começa NULL (upload "pendente", ainda não anexado a uma
+  -- mensagem enviada) e é preenchido quando a mensagem é criada — permite o
+  -- cliente pré-visualizar o arquivo antes de enviar o texto. channel_id fica
+  -- guardado à parte pra validar, no momento de anexar, que o upload
+  -- pendente pertence ao mesmo canal da mensagem (e ao mesmo usuário).
+  CREATE TABLE IF NOT EXISTS message_attachments (
+    id TEXT PRIMARY KEY,
+    message_id TEXT REFERENCES text_messages(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL REFERENCES text_channels(id) ON DELETE CASCADE,
+    object_key TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    uploaded_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_message_attachments_message
+    ON message_attachments(message_id);
 `);
 
 // O SausiMusic mantém um único player persistente por canal de texto. Limpa

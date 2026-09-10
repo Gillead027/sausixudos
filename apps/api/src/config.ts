@@ -23,6 +23,15 @@ const envSchema = z.object({
   VOICE_CHANNELS: z.string().default(
     'geral:Geral:Conversa livre,jogos:Jogos:Partidas e squads,afk:AFK:Pausa rápida',
   ),
+  MINIO_ENDPOINT: z.string().default('localhost'),
+  MINIO_PORT: z.coerce.number().int().min(1).max(65535).default(9000),
+  MINIO_USE_SSL: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  MINIO_ACCESS_KEY: z.string().min(1).default('sausixudos'),
+  MINIO_SECRET_KEY: z.string().min(8).default('sausixudos-dev-secret'),
+  MINIO_BUCKET: z.string().default('sausixudos-attachments'),
 });
 
 const parsed = envSchema.safeParse(process.env);

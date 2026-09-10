@@ -1,5 +1,8 @@
-import { type FormEvent, type RefObject, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { type ChangeEvent, type FormEvent, type RefObject, useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
+  ATTACHMENT_INLINE_IMAGE_TYPES,
+  ATTACHMENT_MAX_PER_MESSAGE,
+  ATTACHMENT_MAX_SIZE_BYTES,
   CHAT_MESSAGE_MAX_LENGTH,
   hasPermission,
   MESSAGE_SEARCH_QUERY_MIN_LENGTH,
@@ -7,6 +10,7 @@ import {
   REACTION_EMOJI,
   TEXT_CHANNEL_DESCRIPTION_MAX_LENGTH,
   TEXT_CHANNEL_NAME_MAX_LENGTH,
+  type MessageAttachment,
   type MusicCommandResponse,
   type ReactionEmoji,
   type TextChannel,
@@ -18,7 +22,20 @@ import { routeTextChannelInput } from '../musicCommandRouting';
 import { onRealtimeConnect, onRealtimeEvent } from '../realtime';
 import { MarkdownText } from './Markdown';
 import { MusicCard } from './MusicCard';
-import { CloseIcon, CopyIcon, EditIcon, MessageIcon, PinIcon, ReplyIcon, SearchIcon, SmileIcon, TrashIcon, VoiceIcon } from './Icons';
+import {
+  AttachmentIcon,
+  CloseIcon,
+  CopyIcon,
+  EditIcon,
+  FileIcon,
+  MessageIcon,
+  PinIcon,
+  ReplyIcon,
+  SearchIcon,
+  SmileIcon,
+  TrashIcon,
+  VoiceIcon,
+} from './Icons';
 
 type MessageStyle = 'default' | 'compact' | 'grouped';
 
@@ -229,6 +246,38 @@ function ReactionBar({
   );
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isInlineImageAttachment(attachment: MessageAttachment): boolean {
+  return (ATTACHMENT_INLINE_IMAGE_TYPES as readonly string[]).includes(attachment.contentType);
+}
+
+function MessageAttachments({ attachments }: { attachments: MessageAttachment[] }) {
+  return (
+    <div className="message-attachments">
+      {attachments.map((attachment) =>
+        isInlineImageAttachment(attachment) ? (
+          <a key={attachment.id} href={attachment.url} target="_blank" rel="noreferrer" className="message-attachment-image">
+            <img src={attachment.url} alt={attachment.filename} loading="lazy" />
+          </a>
+        ) : (
+          <a key={attachment.id} href={attachment.url} className="message-attachment-file" download={attachment.filename}>
+            <FileIcon size={20} />
+            <span className="message-attachment-file-info">
+              <strong>{attachment.filename}</strong>
+              <small>{formatFileSize(attachment.sizeBytes)}</small>
+            </span>
+          </a>
+        ),
+      )}
+    </div>
+  );
+}
+
 // Só o id é guardado (ver comentário em TextMessage.replyToMessageId no
 // pacote compartilhado) — resolve contra as mensagens já carregadas nesta
 // conversa; se não achar (fora da janela de 100, ou apagada), mostra um
@@ -325,8 +374,9 @@ function HumanTextMessageRow({
         {isEditing ? (
           <MessageEditForm initialText={message.text} onSave={onSaveEdit} onCancel={onCancelEdit} />
         ) : (
-          <p><MarkdownText text={message.text} /></p>
+          message.text && <p><MarkdownText text={message.text} /></p>
         )}
+        {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
         <ReactionBar message={message} ownUserId={session.id} onToggle={onToggleReaction} />
       </div>
       {!isEditing && (
@@ -552,10 +602,43 @@ export function TextChannelView({
   const [pinsOpen, setPinsOpen] = useState(false);
   const [pinnedMessages, setPinnedMessages] = useState<TextMessage[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isTimedOut = Boolean(session.timeoutUntil && session.timeoutUntil > Date.now());
   const canManageMessages = hasPermission(session.permissions, Permission.MANAGE_MESSAGES);
+
+  async function handleFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (!files.length) return;
+    setAttachmentError('');
+    const room = ATTACHMENT_MAX_PER_MESSAGE - pendingAttachments.length;
+    if (files.length > room) {
+      setAttachmentError(`Só dá pra anexar até ${ATTACHMENT_MAX_PER_MESSAGE} arquivos por mensagem.`);
+    }
+    const toUpload = files.slice(0, Math.max(room, 0));
+    setUploading(true);
+    try {
+      for (const file of toUpload) {
+        if (file.size > ATTACHMENT_MAX_SIZE_BYTES) {
+          setAttachmentError(`"${file.name}" passa do limite de ${Math.floor(ATTACHMENT_MAX_SIZE_BYTES / 1024 / 1024)}MB.`);
+          continue;
+        }
+        try {
+          const { attachment } = await api.uploadAttachment(channel.id, file);
+          setPendingAttachments((current) => [...current, attachment]);
+        } catch (uploadError) {
+          setAttachmentError(uploadError instanceof Error ? uploadError.message : `Não foi possível enviar "${file.name}".`);
+        }
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
 
   // Só destaca visualmente se a mensagem original estiver na janela já
   // carregada (até 100 mensagens) — sem isso, não há pra onde rolar.
@@ -636,6 +719,8 @@ export function TextChannelView({
     setPinsOpen(false);
     setPinnedMessages([]);
     setSearchOpen(false);
+    setPendingAttachments([]);
+    setAttachmentError('');
 
     const refresh = async () => {
       if (requestRunning) return;
@@ -702,20 +787,22 @@ export function TextChannelView({
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || sending) return;
+    if ((!text && pendingAttachments.length === 0) || sending) return;
     setSending(true);
     setError('');
     setFeedback(null);
     try {
+      const attachmentIds = pendingAttachments.map(({ id }) => id);
       const result = await routeTextChannelInput({
         text,
         voiceChannelId,
         textChannelId: channel.id,
         sendMusicCommand: api.sendMusicCommand,
         sendTextMessage: async (messageText) =>
-          (await api.sendTextMessage(channel.id, messageText, replyingTo?.id)).message,
+          (await api.sendTextMessage(channel.id, messageText, replyingTo?.id, attachmentIds)).message,
       });
       setReplyingTo(null);
+      setPendingAttachments([]);
       if (result.kind === 'text-message') {
         const { message } = result;
         setMessages((current) => applyIncomingMessage(current, message));
@@ -856,27 +943,75 @@ export function TextChannelView({
           </span>
         </div>
       )}
+      {attachmentError && (
+        <div className="reply-composer-banner timeout-composer-banner">
+          <span>{attachmentError}</span>
+          <button type="button" aria-label="Fechar aviso" onClick={() => setAttachmentError('')}>
+            <CloseIcon size={13} />
+          </button>
+        </div>
+      )}
+      {pendingAttachments.length > 0 && (
+        <div className="pending-attachments-strip">
+          {pendingAttachments.map((attachment) => (
+            <div className="pending-attachment-chip" key={attachment.id}>
+              {isInlineImageAttachment(attachment) ? (
+                <img src={attachment.url} alt="" />
+              ) : (
+                <FileIcon size={16} />
+              )}
+              <span>{attachment.filename}</span>
+              <button
+                type="button"
+                aria-label={`Remover ${attachment.filename}`}
+                onClick={() => setPendingAttachments((current) => current.filter(({ id }) => id !== attachment.id))}
+              >
+                <CloseIcon size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <form className="text-channel-form" onSubmit={submitMessage}>
-        <label className="sr-only" htmlFor="text-channel-message">Mensagem para #{channel.name}</label>
-        <textarea
-          ref={inputRef}
-          id="text-channel-message"
-          rows={1}
-          maxLength={CHAT_MESSAGE_MAX_LENGTH}
-          value={draft}
-          disabled={isTimedOut}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-          placeholder={isTimedOut ? 'Você está em timeout' : `Conversar em #${channel.name}`}
-        />
+        <div className="text-channel-input-row">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="sr-only"
+            onChange={(event) => void handleFilesSelected(event)}
+          />
+          <button
+            type="button"
+            className="text-channel-attach-button"
+            title="Anexar arquivo"
+            aria-label="Anexar arquivo"
+            disabled={isTimedOut || uploading || pendingAttachments.length >= ATTACHMENT_MAX_PER_MESSAGE}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <AttachmentIcon size={17} />
+          </button>
+          <label className="sr-only" htmlFor="text-channel-message">Mensagem para #{channel.name}</label>
+          <textarea
+            ref={inputRef}
+            id="text-channel-message"
+            rows={1}
+            maxLength={CHAT_MESSAGE_MAX_LENGTH}
+            value={draft}
+            disabled={isTimedOut}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            placeholder={isTimedOut ? 'Você está em timeout' : uploading ? 'Enviando arquivo…' : `Conversar em #${channel.name}`}
+          />
+        </div>
         <div className="text-channel-form-meta">
           <span>{draft.length}/{CHAT_MESSAGE_MAX_LENGTH}</span>
-          <button type="submit" disabled={isTimedOut || sending || !draft.trim()}>
+          <button type="submit" disabled={isTimedOut || sending || uploading || (!draft.trim() && pendingAttachments.length === 0)}>
             {sending ? 'Enviando…' : 'Enviar'}
           </button>
         </div>
