@@ -2,7 +2,7 @@
 
 Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord — app privado, self-hosted, para um grupo fechado de amigos. Atualizar conforme cada item avança. Categorias: `DONE`, `PARTIAL`, `MISSING`, `BLOCKED`, `OPTIONAL`, `PREMIUM`, `EXPERIMENTAL`.
 
-Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário.
+Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário; (6) cargos, permissões e moderação básica — kick/ban/timeout (ver §1, §14, §15).
 
 ## 0. Arquitetura atual (para não recriar o que já existe)
 
@@ -31,8 +31,8 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Tabela `servers` (múltiplos servidores) | `MISSING` | Hoje é 1 servidor fixo. Precisa existir antes de: cargos, convites por servidor, categorias, boost, server tags, onboarding. |
 | Categorias de canal | `MISSING` | Canais de texto e de voz continuam listas planas (sem agrupamento), mesmo já sendo dados de banco. |
 | Canais de voz como dados (não `.env`) | `DONE` | Tabela `voice_channels` (`apps/api/src/db.ts`), CRUD em `apps/api/src/voiceChannels.ts`, rotas `POST`/`DELETE /api/voice-channels`, UI de criação em `Workspace.tsx`. Migração de seed preserva os canais que já existiam via `VOICE_CHANNELS` — verificado contra o banco de produção real após o deploy. O bot de música não valida mais contra uma lista estática carregada no boot (confiava na validação já feita pela API). |
-| Cargos (`roles`) | `MISSING` | Nenhuma tabela, nenhum conceito de cargo hoje. |
-| Permissões granulares (allow/deny/inherit) | `MISSING` | Hoje não há checagem de permissão nenhuma no backend além de "está autenticado" (criar/apagar canal de voz segue esse mesmo padrão, igual canal de texto). |
+| Cargos (`roles`) | `DONE` (globais, sem multi-servidor) | Tabelas `roles`/`user_roles` (`apps/api/src/roles.ts`). `@everyone` automático pra todo usuário registrado; sem hierarquia de "dono" separada nem reordenação manual de posição (cargo novo nasce logo abaixo do mais alto de quem criou) — redução deliberada, ver §15. |
+| Permissões granulares (allow/deny/inherit) | `PARTIAL` | Bitfield real (`Permission` em `packages/shared`) checado no backend em canais, mensagens, soundboard, cargos e moderação — mas só "concede" (sem allow/deny/inherit por canal, sem override por canal individual). |
 | Convites reais (tabela, expiração, usos) | `MISSING` | Hoje é 1 token de convite global fixo no `.env`, sem rastreamento. |
 | Amigos / bloqueios / DMs / grupos | `MISSING` | Nenhuma tabela, nenhuma rota, nenhuma UI. |
 | WebSocket real para texto/presença/typing | `DONE` (texto/salas/canais) — `MISSING` (typing/presença de status) | `apps/api/src/realtime.ts` (`ws`, autenticado por cookie no handshake) + `apps/web/src/realtime.ts` (cliente com reconexão exponencial). Substituiu os 3 loops de polling (mensagens 2s, salas 4s, canais de texto 10s) por eventos `TEXT_MESSAGE_*`/`TEXT_CHANNEL_CREATE`/`VOICE_CHANNEL_*`/`ROOM_STATE_UPDATE`. Estado de sala de voz vem de webhook do LiveKit, não mais de poll de `roomService.listRooms`. Verificado ponta-a-ponta com dois clientes reais (latência ~7ms vs. até 2000ms do polling antigo) antes do deploy. Ainda falta: typing indicator e presença de status (online/ausente/dnd) — esses eventos não existem ainda, só os que já tinham equivalente em polling. |
@@ -83,8 +83,8 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Mensagens (texto simples) | `DONE` básico |
 | Mensagens (tempo real de verdade) | `DONE` — WebSocket, ver §1 |
 | Amigos | `MISSING` |
-| Cargos | `MISSING` |
-| Permissões | `MISSING` |
+| Cargos | `DONE` (globais, ver §1) |
+| Permissões | `PARTIAL` (ver §1) |
 
 ## 5. FASE 2 — VOZ (prioridade especial #1 do pedido)
 
@@ -169,7 +169,7 @@ Tudo nesta fase é `MISSING`: Shop, moeda interna (Orbs), inventário, decoraç�
 
 ## 11. FASE 8 — SERVER POWER FEATURES
 
-Tudo `MISSING` ou `BLOCKED` por §1: fóruns, stage channels, eventos, onboarding, rules screening, aplicação para entrar, AutoMod, audit log, slowmode (não existe nem por canal), timeout/ban/kick (não existe nenhuma ação de moderação hoje).
+`Timeout/ban/kick` agora `DONE` (ver §1, §15) — `POST/DELETE /api/moderation/timeout`, `/bans`, `/voice-kick`, com hierarquia por posição de cargo. O resto continua `MISSING` ou `BLOCKED` por §1: fóruns, stage channels, eventos, onboarding, rules screening, aplicação para entrar, AutoMod, audit log, slowmode (não existe nem por canal).
 
 ## 12. FASE 9 — APPS
 
@@ -196,9 +196,9 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 | Hash de senha | `DONE` (a confirmar algoritmo exato em `users.ts`) |
 | HTTPS | `DONE` (Caddy) |
 | Rate limiting | `PARTIAL` — existe em auth (`authLimiter`) e criação de canal (`textChannelCreateLimiter`); não existe em mensagens, reações, uploads (que ainda não existem) |
-| Validação de permissão no backend | `PARTIAL` — como não há cargos/permissões, hoje é binário (autenticado ou não); nada a "burlar" ainda, mas também nada granular |
+| Validação de permissão no backend | `DONE` (reduzida) — bitfield de permissões checado em canais/mensagens/soundboard/cargos/moderação, com hierarquia por posição de cargo; ainda sem allow/deny por canal individual (ver §1) |
 | CSP | `DONE` no cliente desktop empacotado; não configurado no `web` servido puro (não há necessidade igual, já que é servido por origem própria via Caddy) |
-| Admin global (painel) | `MISSING` |
+| Admin global (painel) | `PARTIAL` — a aba "Membros"/"Cargos" das configurações do servidor já cobre moderação básica (ver §1, §15); não há um painel dedicado separado |
 | Feature flags | `MISSING` — recomendado antes de começar a ligar features grandes em produção incrementalmente |
 | i18n | `MISSING` — strings em português hardcoded em todos os componentes |
 | Observabilidade estruturada | `MISSING` — hoje é `console.log`/arquivo de debug ad-hoc no desktop |
@@ -218,8 +218,8 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 9. Temas — `DONE`
 10. Sistema Premium completo — `MISSING`
 11. Soundboard — `DONE` (áudio real via LiveKit; falta confirmação ao vivo do usuário numa call de verdade)
-12. Roles/permissões — `MISSING`
-13. Administração — `MISSING`
+12. Roles/permissões — `DONE` (globais, sem hierarquia completa de servidor — ver §1)
+13. Administração — `DONE` (básica: kick da voz, timeout, ban/desban, cargos — via aba "Membros"/"Cargos"; sem painel dedicado nem audit log, ver §14)
 14. Chat completo — `PARTIAL` (texto em tempo real, markdown, edição/exclusão, reações e reply já funcionam; threads/pins/forward/busca/emoji picker completo ainda ausentes)
 
 ---
@@ -230,7 +230,9 @@ Dado que grande parte do pedido depende da fundação de dados (§1) que não ex
 
 - **A) Fundação de dados + WebSocket real** — `DONE` (ver §1). Necessário antes de roles/permissões/DMs/moderação/auditoria.
 - **B) Chat completo no servidor único atual** — markdown, edição/exclusão, reações e reply **já feitos** (ver §8). Falta: pins, forward (depende de DM/multi-servidor), busca, upload de arquivo. Uploads exigem decidir armazenamento (MinIO na própria VPS é a opção mais compatível com a infra atual).
-- **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — ainda não iniciado. Pode ser feito de forma reduzida (cargos globais, sem hierarquia complexa) sem esperar multi-servidor.
+- **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — `DONE` (ver §1, §14, §15). Cargos globais reais, bitfield de permissões, hierarquia por posição, kick/ban/timeout com força de desconexão real, aba "Cargos"/"Membros" funcional. Verificado com 28 checagens de E2E real (dois usuários, WebSocket, banco) e confirmado em produção logo após o deploy. Pendente só de uma passada visual/UX do usuário nas novas telas (não dá pra abrir navegador a partir deste ambiente).
 - **D) Soundboard** — `DONE` (ver §12), pendente só de confirmação ao vivo do usuário numa call real.
+
+Com A, C e D feitos, o que resta de maior impacto é (B) fechar o chat (pins/forward/busca/upload) ou avançar a fundação maior (`servers`, `server_members`, amigos/DMs) que ainda bloqueia múltiplos servidores, convites reais e boa parte do FASE 7/8.
 
 Este documento será atualizado a cada sessão de trabalho subsequente com o que foi de fato implementado, testado e implantado — nunca marcar `DONE` sem teste ponta a ponta real, conforme a regra do pedido original.
