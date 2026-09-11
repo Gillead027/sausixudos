@@ -2,7 +2,7 @@
 
 Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord — app privado, self-hosted, para um grupo fechado de amigos. Atualizar conforme cada item avança. Categorias: `DONE`, `PARTIAL`, `MISSING`, `BLOCKED`, `OPTIONAL`, `PREMIUM`, `EXPERIMENTAL`.
 
-Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário; (6) cargos, permissões e moderação básica — kick/ban/timeout (ver §1, §14, §15); (7) mensagens fixadas e busca por canal (ver §8); (8) upload de arquivo/imagem em mensagem via MinIO self-hosted (ver §0, §8) — primeiro serviço de infraestrutura novo desta sessão.
+Última análise completa do código: 2026-09-09. Atualizado em 2026-09-10 após implementar e verificar em produção: (1) a fundação de WebSocket + canais de voz como dados (ver §1); (2) edição/exclusão de mensagem + markdown seguro (ver §8); (3) reações em mensagens (ver §8); (4) responder mensagem (ver §8); (5) soundboard com áudio real via LiveKit (ver §12) — pendente de confirmação ao vivo do usuário; (6) cargos, permissões e moderação básica — kick/ban/timeout (ver §1, §14, §15); (7) mensagens fixadas e busca por canal (ver §8); (8) upload de arquivo/imagem em mensagem via MinIO self-hosted (ver §0, §8); (9) sistema de amigos + mensagens diretas 1:1 (ver §1, §15, §16) — verificado com script de CRUD puro, E2E via HTTP+WebSocket, verificação visual real em dois navegadores via Playwright, e smoke test em produção.
 
 ## 0. Arquitetura atual (para não recriar o que já existe)
 
@@ -34,12 +34,12 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Cargos (`roles`) | `DONE` (globais, sem multi-servidor) | Tabelas `roles`/`user_roles` (`apps/api/src/roles.ts`). `@everyone` automático pra todo usuário registrado; sem hierarquia de "dono" separada nem reordenação manual de posição (cargo novo nasce logo abaixo do mais alto de quem criou) — redução deliberada, ver §15. |
 | Permissões granulares (allow/deny/inherit) | `PARTIAL` | Bitfield real (`Permission` em `packages/shared`) checado no backend em canais, mensagens, soundboard, cargos e moderação — mas só "concede" (sem allow/deny/inherit por canal, sem override por canal individual). |
 | Convites reais (tabela, expiração, usos) | `MISSING` | Hoje é 1 token de convite global fixo no `.env`, sem rastreamento. |
-| Amigos / bloqueios / DMs / grupos | `MISSING` | Nenhuma tabela, nenhuma rota, nenhuma UI. |
-| WebSocket real para texto/presença/typing | `DONE` (texto/salas/canais) — `MISSING` (typing/presença de status) | `apps/api/src/realtime.ts` (`ws`, autenticado por cookie no handshake) + `apps/web/src/realtime.ts` (cliente com reconexão exponencial). Substituiu os 3 loops de polling (mensagens 2s, salas 4s, canais de texto 10s) por eventos `TEXT_MESSAGE_*`/`TEXT_CHANNEL_CREATE`/`VOICE_CHANNEL_*`/`ROOM_STATE_UPDATE`. Estado de sala de voz vem de webhook do LiveKit, não mais de poll de `roomService.listRooms`. Verificado ponta-a-ponta com dois clientes reais (latência ~7ms vs. até 2000ms do polling antigo) antes do deploy. Ainda falta: typing indicator e presença de status (online/ausente/dnd) — esses eventos não existem ainda, só os que já tinham equivalente em polling. |
+| Amigos / bloqueios / DMs 1:1 | `DONE` (sem grupo) | Tabelas `friendships`/`blocks`/`dm_channels`/`dm_messages` (`apps/api/src/friendships.ts`/`blocks.ts`/`dmChannels.ts`). Pedido/aceite/recusa/remoção/bloqueio reais, DM 1:1 exige amizade `ACCEPTED` (sem "solicitação de mensagem" de estranho — redução deliberada). DM em grupo, reação/pin/busca/anexo dentro de DM continuam `MISSING` (chat de servidor já tem tudo isso; DM começou mais simples). |
+| WebSocket real para texto/presença/typing | `DONE` (texto/salas/canais/amigos/DM) — `MISSING` (typing/presença de status) | `apps/api/src/realtime.ts` (`ws`, autenticado por cookie no handshake) + `apps/web/src/realtime.ts` (cliente com reconexão exponencial). Substituiu os 3 loops de polling (mensagens 2s, salas 4s, canais de texto 10s) por eventos `TEXT_MESSAGE_*`/`TEXT_CHANNEL_CREATE`/`VOICE_CHANNEL_*`/`ROOM_STATE_UPDATE`, e ganhou `sendToUsers`/`sendToUser` (envio direcionado, não mais só `broadcast()` pra todo mundo) pra suportar amizade/DM com privacidade real. Verificado ponta-a-ponta com dois clientes reais (latência ~7ms vs. até 2000ms do polling antigo) antes do deploy, e de novo agora pro fluxo de amigos/DM. Ainda falta: typing indicator e presença de status (online/ausente/dnd) — esses eventos não existem ainda. |
 | Storage de objetos (uploads) | `DONE` | MinIO self-hosted (novo serviço no `docker-compose.yml`, ver §0). Usado só para anexo de mensagem por enquanto — avatar/banner continuam via `data:` URL (não migrados, sem necessidade). |
 | Migrations versionadas | `PARTIAL` | Ainda é `CREATE TABLE IF NOT EXISTS`/seed condicional (sem versionamento formal), mas já suportou uma tabela nova (`voice_channels`) com sucesso e sem perda de dados em produção. Continua não sendo um sistema de migration de verdade — precisa existir antes das tabelas maiores (`servers`, `roles`, etc.). |
 
-**Recomendação**: a fundação de WebSocket + canais de voz como dados já está implementada e em produção (ver linhas acima). O próximo passo de fundação, ainda não feito, é o mesmo de antes: `servers`, `server_members`, `channels` unificando texto+voz sob um servidor, `roles`, `role_permissions`, `invites` reais, `friendships`, `dm_channels`. O WebSocket já existente deve ser estendido (não recriado) com os novos tipos de evento que essas features vão precisar.
+**Recomendação**: WebSocket, canais de voz como dados, cargos/permissões/moderação, e agora amigos/bloqueios/DM 1:1 já estão implementados e em produção (ver linhas acima). O único item grande de fundação que resta é `servers`/`server_members`/`channels` unificando texto+voz sob um servidor de verdade + `invites` reais — isso é o que ainda bloqueia múltiplos servidores, convites por servidor, cargos por servidor, forward de mensagem, categorias, boost e server tags. O WebSocket já existente deve ser estendido (não recriado) com os novos tipos de evento que isso vai precisar.
 
 ---
 
@@ -79,10 +79,10 @@ Documento vivo de paridade funcional com o Discord, para o Sausixudos/GilleCord 
 | Servidores | `MISSING` (ver §1) |
 | Canais (texto) | `DONE` básico — criar, listar, enviar/receber em tempo real via WebSocket |
 | Canais (voz) | `DONE` — dados reais (`voice_channels`), criar/apagar pela UI, ainda sem categorias |
-| DM | `MISSING` |
+| DM | `DONE` (1:1, ver §1) — sem grupo, sem reação/pin/busca/anexo dentro do DM ainda |
 | Mensagens (texto simples) | `DONE` básico |
 | Mensagens (tempo real de verdade) | `DONE` — WebSocket, ver §1 |
-| Amigos | `MISSING` |
+| Amigos | `DONE` (pedido/aceite/recusa/remoção/bloqueio, ver §1) |
 | Cargos | `DONE` (globais, ver §1) |
 | Permissões | `PARTIAL` (ver §1) |
 
@@ -211,7 +211,7 @@ Clips, overlay de jogo, streamer mode, quests, E2EE avançado: todos `MISSING`. 
 2. Transmissão de tela — `DONE` (falta troca de qualidade sem reconectar)
 3. Compartilhamento de áudio — `DONE`
 4. Vídeo — `DONE` básico (falta fundo/blur)
-5. Conversar com amigos — `PARTIAL` (chat de texto existe; sistema de "amigos" formal não existe — hoje todo mundo no servidor único já vê tudo)
+5. Conversar com amigos — `DONE` (sistema de amigos real + DM 1:1, ver §1; grupo de DM e forward ainda dependem de multi-servidor)
 6. Servidores e canais — `PARTIAL` (canais de texto e voz são dados reais com CRUD e tempo real; múltiplos servidores/categorias não)
 7. Bots de música — `DONE`
 8. Personalização de perfil — `DONE`
@@ -233,7 +233,8 @@ Dado que grande parte do pedido depende da fundação de dados (§1) que não ex
 - **C) Roles/permissões básicas + moderação (kick/ban/timeout)** — `DONE` (ver §1, §14, §15). Cargos globais reais, bitfield de permissões, hierarquia por posição, kick/ban/timeout com força de desconexão real, aba "Cargos"/"Membros" funcional. Verificado com 28 checagens de E2E real (dois usuários, WebSocket, banco) e confirmado em produção logo após o deploy. Pendente só de uma passada visual/UX do usuário nas novas telas (não dá pra abrir navegador a partir deste ambiente).
 - **D) Soundboard** — `DONE` (ver §12), pendente só de confirmação ao vivo do usuário numa call real.
 - **E) Upload de arquivo/imagem em mensagem** — `DONE` (ver §0/§1/§8). Primeiro serviço de infraestrutura novo da sessão (MinIO self-hosted, nunca exposto à internet). Verificado com 18 checagens locais (MinIO real via Docker, incluindo a prova de segurança de que um SVG malicioso é sempre forçado a download) + 8 checagens direto em produção via HTTPS (registro, upload, download com bytes idênticos, envio de mensagem, exclusão limpando o objeto).
+- **F) Amigos + mensagens diretas 1:1** — `DONE` (ver §1, §4, §15). Pedido/aceite (com auto-aceite em pedido mútuo simultâneo)/recusa/remoção/bloqueio reais; DM 1:1 exige amizade; `realtime.ts` ganhou envio direcionado (`sendToUsers`) em vez de só broadcast global. Escopo reduzido deliberado: sem DM em grupo, sem "solicitação de mensagem" de não-amigo, sem reação/pin/busca/anexo dentro do DM ainda. Verificado em 3 camadas: CRUD puro (31/31), E2E via HTTP+WebSocket com 3 usuários (31/31), e verificação visual real com Playwright em dois navegadores (pedido → aceite ao vivo → DM → mensagens nos dois sentidos, sem reload, sem erro de console) + smoke test em produção via HTTPS (7/7).
 
-Com A, C, D e E feitos e B praticamente esgotado (só restam forward e emoji picker completo, ambos de baixo valor isolado ou bloqueados), o que resta de maior impacto agora é avançar a fundação maior (`servers`, `server_members`, amigos/DMs) que ainda bloqueia múltiplos servidores, convites reais, forward e boa parte do FASE 7/8 — esse é de longe o trabalho de maior volume que resta no pedido original, e o único item grande ainda não iniciado.
+Com A, C, D, E e F feitos e B praticamente esgotado (só restam forward e emoji picker completo, ambos de baixo valor isolado ou bloqueados), o único item grande do pedido original ainda não iniciado é a fundação de múltiplos servidores de verdade (`servers`, `server_members`, `channels` unificando texto+voz, convites reais por servidor) — isso é o que ainda bloqueia forward de mensagem, cargos por servidor, categorias, boost, server tags e boa parte do FASE 7/8. É de longe o maior trabalho que resta.
 
 Este documento será atualizado a cada sessão de trabalho subsequente com o que foi de fato implementado, testado e implantado — nunca marcar `DONE` sem teste ponta a ponta real, conforme a regra do pedido original.
