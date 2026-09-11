@@ -1919,8 +1919,15 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
     } else {
       setJoiningId(channel.id);
     }
-    await voice.connect(channel);
-    setJoiningId(null);
+    // try/finally é defesa em profundidade: voice.connect() já trata os
+    // próprios erros internamente (nunca deveria rejeitar), mas sem isso um
+    // erro inesperado aqui deixaria joiningId travado pra sempre e a tela de
+    // "Entrando na sala..." nunca sumiria.
+    try {
+      await voice.connect(channel);
+    } finally {
+      setJoiningId(null);
+    }
   }
 
 

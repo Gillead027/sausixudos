@@ -315,7 +315,12 @@ function installSessionSecurity(appUrl: URL): void {
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     "media-src 'self' blob: mediastream:",
-    `connect-src 'self' ${appOrigin} ${websocketOrigin}${developmentConnections}`,
+    // data: aqui é defesa em profundidade — o soundboard decodifica a
+    // data: URL manualmente (sem fetch) exatamente pra não depender disso,
+    // mas connect-src é quem rege fetch()/XHR (media-src/img-src não
+    // cobrem isso), então liberar o esquema evita a mesma classe de bug
+    // "Failed to fetch" em qualquer outro fetch(dataUrl) que apareça depois.
+    `connect-src 'self' data: ${appOrigin} ${websocketOrigin}${developmentConnections}`,
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

@@ -230,6 +230,43 @@ function isScreenShareCancelled(error: unknown): boolean {
   return /invalid capture constraints/i.test(message);
 }
 
+// Decodifica uma data: URL (base64) direto em ArrayBuffer sem passar pelo
+// fetch(). No cliente desktop empacotado, fetch('data:...') é bloqueado pela
+// CSP (connect-src não libera o esquema data:, só img-src/font-src liberam
+// — e connect-src é quem rege fetch/XHR, não media-src) e falha com
+// "Failed to fetch"; decodificar manualmente não depende de rede nem de CSP.
+function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
+const CONNECT_TIMEOUT_MS = 20_000;
+
+// room.connect()/room.disconnect() não têm timeout próprio — numa rede ruim
+// (sem TURN/coturn, ver DISCORD_PARITY_PLAN.md, a negociação ICE pode ficar
+// "checking" pra sempre) a promise nunca resolve nem rejeita, e a tela de
+// "Entrando na sala..." (controlada por essa mesma promise em Workspace.tsx)
+// fica presa pra sempre, sem erro nenhum pra explicar. Isso converte esse
+// travamento silencioso num erro de verdade depois de um tempo limite.
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function useVoiceRoom() {
   const initialMicProfile = useRef(loadMicProfile());
   const initialNoiseSuppression = useRef(loadNoiseSuppression());
@@ -306,6 +343,13 @@ export function useVoiceRoom() {
   const inputSensitivityRef = useRef(inputSensitivity);
   const deafenedRef = useRef(false);
   const krispProcessorRef = useRef<KrispNoiseFilterProcessor | null>(null);
+  // Trava contra chamadas concorrentes de connect() — clicar de novo no
+  // canal de voz (ex.: voltando de um canal de texto) enquanto uma tentativa
+  // anterior ainda está em andamento faria dois room.connect()/disconnect()
+  // simultâneos brigarem pelo mesmo Room, um jeito conhecido de travar o SDK
+  // sem erro nenhum. Um clique repetido enquanto já está conectando é
+  // simplesmente ignorado.
+  const connectingRef = useRef(false);
   // Última atividade conhecida (jogo/mídia), reportada pelo app desktop —
   // guardada aqui pra poder ser aplicada assim que uma conexão é aberta,
   // já que o metadata inicial do token sempre chega com activity: null (o
@@ -689,16 +733,24 @@ export function useVoiceRoom() {
       ) {
         return;
       }
+      if (connectingRef.current) return;
+      connectingRef.current = true;
 
       setError('');
       setConnectionState(ConnectionState.Connecting);
       try {
-        if (room.state !== ConnectionState.Disconnected) await room.disconnect();
+        if (room.state !== ConnectionState.Disconnected) {
+          await withTimeout(room.disconnect(), CONNECT_TIMEOUT_MS, 'Não foi possível sair do canal anterior. Tente de novo.');
+        }
         setMessages([]);
         setDeafened(false);
         const credentials = await api.getLiveKitToken(channel.id);
         suppressPresenceSoundsRef.current = true;
-        await room.connect(credentials.url, credentials.token, { autoSubscribe: true });
+        await withTimeout(
+          room.connect(credentials.url, credentials.token, { autoSubscribe: true }),
+          CONNECT_TIMEOUT_MS,
+          'A conexão com o canal de voz demorou demais. Verifique sua rede e tente de novo.',
+        );
         setTimeout(() => {
           suppressPresenceSoundsRef.current = false;
         }, 1_500);
@@ -728,13 +780,15 @@ export function useVoiceRoom() {
         // cobre troca de canal, que passa por aqui de novo.
         playJoinSound(getOutputVolume());
       } catch (connectError) {
-        await room.disconnect();
+        await room.disconnect().catch(() => {});
         setCurrentChannel(null);
         setError(
           connectError instanceof Error
             ? connectError.message
             : 'Não foi possível entrar no canal de voz.',
         );
+      } finally {
+        connectingRef.current = false;
       }
     },
     [currentChannel, room, syncRoom, refreshDevices, applyActivity],
@@ -1024,8 +1078,7 @@ export function useVoiceRoom() {
       if (room.state !== ConnectionState.Connected) return;
       const audioContext = new AudioContext();
       try {
-        const response = await fetch(sound.audioDataUrl);
-        const arrayBuffer = await response.arrayBuffer();
+        const arrayBuffer = dataUrlToArrayBuffer(sound.audioDataUrl);
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
         const destination = audioContext.createMediaStreamDestination();
