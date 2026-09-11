@@ -1610,6 +1610,24 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [rooms, setRooms] = useState<RoomSummary[]>(config.channels.map((channel) => ({ ...channel, participants: [] })));
   const [livekitAvailable, setLivekitAvailable] = useState(true);
   const [joiningId, setJoiningId] = useState<string | null>(null);
+  // Rede de segurança independente do próprio voice.connect(): mesmo com
+  // timeout lá dentro (useVoiceRoom.ts), o SDK do LiveKit pode disparar
+  // RoomEvent.ConnectionStateChanged pra "Connected" (o que já libera o
+  // cabeçalho/lista de membros, via os listeners de room separados) bem
+  // antes da promise de room.connect() em si resolver — nesse caso a tela
+  // de "Entrando na sala..." (presa a joiningId) ficava travada mesmo com a
+  // sala já conectada de verdade. Aqui: (1) reage assim que a conexão real
+  // é confirmada, e (2) tem um teto de tempo que libera de qualquer jeito,
+  // pra nunca depender só da promise interna resolver.
+  useEffect(() => {
+    if (!joiningId) return;
+    if (voice.connected) {
+      setJoiningId(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setJoiningId(null), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [joiningId, voice.connected]);
   const [disconnectingIdentity, setDisconnectingIdentity] = useState<string | null>(null);
   const [quality, setQuality] = useState<ShareQuality>('1080p60');
   const [volumes, setVolumes] = useState<Record<string, number>>({});
