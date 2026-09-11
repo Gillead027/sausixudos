@@ -282,6 +282,15 @@ button:disabled { cursor: default; opacity: .45; }
 .text-channel-button:hover { color: var(--text-primary); background: var(--hover); }
 .text-channel-button.active { color: var(--text-primary); background: var(--selected); }
 .text-channel-button > span:last-child { overflow: hidden; font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.dm-nav-list { padding: 8px 8px 0; }
+.dm-home-button { position: relative; justify-content: space-between; }
+.dm-pending-badge {
+  flex: none; min-width: 16px; height: 16px; padding: 0 4px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; color: #fff; background: #e05a5a; font-size: 9px; font-weight: 700;
+}
+.dm-pending-badge.rail-badge { position: absolute; top: -4px; right: -4px; }
+.dm-list-empty { padding: 8px; color: var(--text-muted); font-size: 11px; }
+.dm-channel-button { gap: 9px; }
 .channel-hash, .room-title-hash { color: var(--text-muted); font-size: 19px; font-weight: 500; line-height: 1; }
 .service-warning { margin: 0 4px 9px; padding: 7px 8px; border: 1px solid #644044; border-radius: 2px; color: #d8a1a4; background: #26191b; font-size: 11px; }
 .channel-block { margin-bottom: 2px; }
@@ -1408,3 +1417,44 @@ body { letter-spacing: -.01em; }
   .sausimusic-controls { gap: 6px; }
   .sausimusic-controls button { padding: 0 9px; }
 }
+
+/* Amigos / Mensagens diretas */
+.friends-home { max-width: 900px; padding: 28px 32px; overflow-y: auto; height: 100%; }
+.friends-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
+.friends-tabs button {
+  height: 34px; padding: 0 14px; border-radius: 999px; color: var(--text-secondary); background: var(--panel-raised);
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.friends-tabs button:hover { color: var(--text-primary); background: var(--hover); }
+.friends-tabs button.active { color: #fff; background: var(--accent); }
+.friends-tab-add { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.friends-list { display: flex; flex-direction: column; gap: 6px; }
+.friends-empty { padding: 24px 0; color: var(--text-muted); font-size: 12px; text-align: center; }
+.friend-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px;
+  padding: 10px 14px; border-radius: 10px;
+}
+.friend-row:hover { background: var(--hover); }
+.friend-row-identity { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--text-primary); text-align: left; cursor: pointer; font: inherit; }
+.friend-row-identity span { font-size: 13px; font-weight: 600; }
+.friend-row-identity small { color: var(--text-muted); font-size: 10px; font-weight: 400; }
+.friend-row-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.friend-row-status { color: var(--text-muted); font-size: 11px; }
+.friend-row-feedback { color: var(--text-muted); font-size: 10px; }
+.friends-add-tab { display: flex; flex-direction: column; gap: 16px; }
+.friends-add-search { width: 260px; }
+
+.dm-channel-view .room-header, .dm-channel-header { padding: 0 20px; }
+.dm-header-identity { display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--text-primary); cursor: pointer; font: inherit; }
+.dm-header-identity strong { font-size: 13px; }
+
+.profile-popover-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.profile-popover-actions .secondary-pill { min-height: 30px; padding: 0 12px; font-size: 10px; }
+
+.friend-action-toast {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 200;
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px;
+  color: #dda3a6; background: #27191b; border: 1px solid #674144; font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.friend-action-toast button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; cursor: pointer; }

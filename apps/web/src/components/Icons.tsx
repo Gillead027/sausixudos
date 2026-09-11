@@ -149,3 +149,11 @@ export function AttachmentIcon(props: IconProps) {
 export function FileIcon(props: IconProps) {
   return <Icon {...props}><path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" /><path d="M14 3v4h4" /></Icon>;
 }
+
+export function UserPlusIcon(props: IconProps) {
+  return <Icon {...props}><circle cx="9" cy="8" r="3.5" /><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6" /><path d="M18 9v6M15 12h6" /></Icon>;
+}
+
+export function BlockIcon(props: IconProps) {
+  return <Icon {...props}><circle cx="12" cy="12" r="8.5" /><path d="m6.5 6.5 11 11" /></Icon>;
+}

@@ -73,6 +73,8 @@ import {
 } from './Icons';
 import { ActivityLine } from './ActivityDisplay';
 import { connectRealtime, onRealtimeConnect, onRealtimeEvent } from '../realtime';
+import { DmChannelView } from './DmChannelView';
+import { FriendsHome, FriendsSidebar, isBlockedByMe as computeIsBlockedByMe, relationshipStatus, useFriendsState } from './Friends';
 import { ProfilePopover, type ProfilePopoverTarget } from './ProfilePopover';
 import { RemoteAudioSink } from './RemoteAudioSink';
 import { ScreenStage } from './ScreenStage';
@@ -1625,6 +1627,30 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [profileTarget, setProfileTarget] = useState<ProfilePopoverTarget | null>(null);
   const openUserProfile = (userId: string, event: { currentTarget: HTMLElement }) =>
     setProfileTarget({ userId, rect: event.currentTarget.getBoundingClientRect() });
+  const [friendActionError, setFriendActionError] = useState('');
+
+  function openDmWith(userId: string) {
+    setFriendActionError('');
+    void api
+      .openDmChannel(userId)
+      .then(({ channel }) => {
+        setView('friends');
+        setSelectedDmChannelId(channel.id);
+        setProfileTarget(null);
+      })
+      .catch((error) => setFriendActionError(error instanceof Error ? error.message : 'Não foi possível abrir a conversa.'));
+  }
+
+  function runFriendAction(promise: Promise<unknown>) {
+    setFriendActionError('');
+    promise.catch((error) => setFriendActionError(error instanceof Error ? error.message : 'Não foi possível concluir a ação.'));
+  }
+
+  useEffect(() => {
+    if (!friendActionError) return;
+    const timer = window.setTimeout(() => setFriendActionError(''), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [friendActionError]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -1632,6 +1658,10 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
   const [soundboardSounds, setSoundboardSounds] = useState<SoundboardSound[]>([]);
   const [textChannels, setTextChannels] = useState<TextChannel[]>([]);
   const [selectedTextChannelId, setSelectedTextChannelId] = useState<string | null>(null);
+  const [view, setView] = useState<'server' | 'friends'>('server');
+  const [selectedDmChannelId, setSelectedDmChannelId] = useState<string | null>(null);
+  const friendsState = useFriendsState(session);
+  const selectedDmChannel = friendsState.dmChannels.find((channel) => channel.id === selectedDmChannelId) ?? null;
   const [createTextChannelOpen, setCreateTextChannelOpen] = useState(false);
   const [createVoiceChannelOpen, setCreateVoiceChannelOpen] = useState(false);
   const [perfMode, setPerfModeState] = useState<PerfMode>(() => getPerfMode());
@@ -1963,6 +1993,12 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
 
   return (
     <main className="workspace">
+      {friendActionError && (
+        <div className="friend-action-toast" role="alert">
+          <span>{friendActionError}</span>
+          <button type="button" onClick={() => setFriendActionError('')} aria-label="Fechar aviso">×</button>
+        </div>
+      )}
       <SettingsModal
         open={settingsOpen}
         onClose={closeSettings}
@@ -2058,94 +2094,136 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
           deafened={voice.deafened || (voice.shareAudioActive && !allowListenWhileSharing)}
         />
       )}
-      <ProfilePopover target={profileTarget} ownSession={session} activity={profileActivity} onClose={() => setProfileTarget(null)} />
+      <ProfilePopover
+        target={profileTarget}
+        ownSession={session}
+        activity={profileActivity}
+        relationship={profileTarget ? relationshipStatus(profileTarget.userId, friendsState) : 'NONE'}
+        isBlockedByMe={profileTarget ? computeIsBlockedByMe(profileTarget.userId, friendsState) : false}
+        onClose={() => setProfileTarget(null)}
+        onSendFriendRequest={(userId) => runFriendAction(api.sendFriendRequest(userId))}
+        onRemoveFriendship={(userId) => runFriendAction(api.removeFriendship(userId))}
+        onBlockUser={(userId) => runFriendAction(api.blockUser(userId))}
+        onUnblockUser={(userId) => runFriendAction(api.unblockUser(userId))}
+        onOpenDm={openDmWith}
+      />
       <aside className="server-rail" aria-label="Servidores">
-        <button className="server-button home" type="button" title="Início" aria-label="Início"><span className="brand-mark compact" aria-hidden="true"><i /><i /></span></button>
+        <button
+          className={`server-button home ${view === 'friends' ? 'active' : ''}`}
+          type="button"
+          title="Início"
+          aria-label="Início"
+          onClick={() => setView('friends')}
+        >
+          <span className="brand-mark compact" aria-hidden="true"><i /><i /></span>
+          {friendsState.incoming.length > 0 && <span className="dm-pending-badge rail-badge">{friendsState.incoming.length}</span>}
+        </button>
         <span className="rail-divider" />
-        <button className="server-button server-current active" type="button" title="Lobby dos amigos" aria-label="Lobby dos amigos">S</button>
+        <button
+          className={`server-button server-current ${view === 'server' ? 'active' : ''}`}
+          type="button"
+          title="Lobby dos amigos"
+          aria-label="Lobby dos amigos"
+          onClick={() => setView('server')}
+        >
+          S
+        </button>
         <button className="server-button add" type="button" title="Adicionar servidor" aria-label="Adicionar servidor" disabled>
           <PlusIcon size={18} />
         </button>
       </aside>
 
       <aside className="sidebar">
-        <header className="sidebar-header">
-          <button type="button" className="server-menu-trigger" onClick={() => setServerSettingsOpen(true)} aria-label="Abrir configurações do servidor">
-            <strong>Lobby dos amigos</strong>
-            <ChevronIcon size={16} />
-          </button>
-        </header>
+        {view === 'server' ? (
+          <>
+            <header className="sidebar-header">
+              <button type="button" className="server-menu-trigger" onClick={() => setServerSettingsOpen(true)} aria-label="Abrir configurações do servidor">
+                <strong>Lobby dos amigos</strong>
+                <ChevronIcon size={16} />
+              </button>
+            </header>
 
-        <nav className="channels" aria-label="Canais do servidor">
-          <div className="section-title">
-            <span>CANAIS DE TEXTO</span>
-            {canManageChannels && (
-              <button
-                ref={createTextChannelButtonRef}
-                type="button"
-                className="add-channel-button"
-                onClick={() => setCreateTextChannelOpen(true)}
-                aria-label="Criar canal de texto"
-                title="Criar canal de texto"
-              >
-                <PlusIcon size={14} />
-              </button>
-            )}
-          </div>
-          <div className="text-channel-list">
-            {textChannels.map((channel) => {
-              const selected = channel.id === selectedTextChannelId;
-              return (
-                <button
-                  key={channel.id}
-                  type="button"
-                  className={`text-channel-button ${selected ? 'active' : ''}`}
-                  onClick={() => setSelectedTextChannelId(channel.id)}
-                  aria-current={selected ? 'page' : undefined}
-                  title={channel.description}
-                >
-                  <span className="channel-hash" aria-hidden="true">#</span>
-                  <span>{channel.name}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="section-title">
-            <span>CANAIS DE VOZ</span>
-            <small>{rooms.reduce((sum, room) => sum + room.participants.length, 0)} online</small>
-            {canManageChannels && (
-              <button
-                ref={createVoiceChannelButtonRef}
-                type="button"
-                className="add-channel-button"
-                onClick={() => setCreateVoiceChannelOpen(true)}
-                aria-label="Criar canal de voz"
-                title="Criar canal de voz"
-              >
-                <PlusIcon size={14} />
-              </button>
-            )}
-          </div>
-          {!livekitAvailable && <div className="service-warning">LiveKit indisponível</div>}
-          {rooms.map((room) => (
-            <ChannelButton
-              key={room.id}
-              channel={room}
-              summary={room}
-              active={voice.currentChannel?.id === room.id && voice.connected}
-              loading={joiningId === room.id}
-              onClick={() => void joinChannel(room)}
-              chatOpen={chatOpen}
-              onToggleChat={() => setChatOpen((open) => !open)}
-              ownIdentity={session.id}
-              ownAvatarUrl={session.avatarUrl}
-              onOpenProfile={openUserProfile}
-              speakingIds={voice.speakers}
-              onDisconnectParticipant={(identity, name) => void disconnectParticipantFromVoice(identity, name)}
-              disconnectingIdentity={disconnectingIdentity}
-            />
-          ))}
-        </nav>
+            <nav className="channels" aria-label="Canais do servidor">
+              <div className="section-title">
+                <span>CANAIS DE TEXTO</span>
+                {canManageChannels && (
+                  <button
+                    ref={createTextChannelButtonRef}
+                    type="button"
+                    className="add-channel-button"
+                    onClick={() => setCreateTextChannelOpen(true)}
+                    aria-label="Criar canal de texto"
+                    title="Criar canal de texto"
+                  >
+                    <PlusIcon size={14} />
+                  </button>
+                )}
+              </div>
+              <div className="text-channel-list">
+                {textChannels.map((channel) => {
+                  const selected = channel.id === selectedTextChannelId;
+                  return (
+                    <button
+                      key={channel.id}
+                      type="button"
+                      className={`text-channel-button ${selected ? 'active' : ''}`}
+                      onClick={() => setSelectedTextChannelId(channel.id)}
+                      aria-current={selected ? 'page' : undefined}
+                      title={channel.description}
+                    >
+                      <span className="channel-hash" aria-hidden="true">#</span>
+                      <span>{channel.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="section-title">
+                <span>CANAIS DE VOZ</span>
+                <small>{rooms.reduce((sum, room) => sum + room.participants.length, 0)} online</small>
+                {canManageChannels && (
+                  <button
+                    ref={createVoiceChannelButtonRef}
+                    type="button"
+                    className="add-channel-button"
+                    onClick={() => setCreateVoiceChannelOpen(true)}
+                    aria-label="Criar canal de voz"
+                    title="Criar canal de voz"
+                  >
+                    <PlusIcon size={14} />
+                  </button>
+                )}
+              </div>
+              {!livekitAvailable && <div className="service-warning">LiveKit indisponível</div>}
+              {rooms.map((room) => (
+                <ChannelButton
+                  key={room.id}
+                  channel={room}
+                  summary={room}
+                  active={voice.currentChannel?.id === room.id && voice.connected}
+                  loading={joiningId === room.id}
+                  onClick={() => void joinChannel(room)}
+                  chatOpen={chatOpen}
+                  onToggleChat={() => setChatOpen((open) => !open)}
+                  ownIdentity={session.id}
+                  ownAvatarUrl={session.avatarUrl}
+                  onOpenProfile={openUserProfile}
+                  speakingIds={voice.speakers}
+                  onDisconnectParticipant={(identity, name) => void disconnectParticipantFromVoice(identity, name)}
+                  disconnectingIdentity={disconnectingIdentity}
+                />
+              ))}
+            </nav>
+          </>
+        ) : (
+          <FriendsSidebar
+            dmChannels={friendsState.dmChannels}
+            ownId={session.id}
+            activeDmChannelId={selectedDmChannelId}
+            pendingCount={friendsState.incoming.length}
+            onSelectDm={setSelectedDmChannelId}
+            onBackToHome={() => setSelectedDmChannelId(null)}
+          />
+        )}
 
         {voice.connected && (
           <div className="voice-status-panel">
@@ -2242,6 +2320,28 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
       </aside>
 
       <section className="main-panel">
+        {view === 'friends' ? (
+          selectedDmChannel ? (
+            <DmChannelView
+              channel={selectedDmChannel}
+              session={session}
+              isBlockedByMe={computeIsBlockedByMe(
+                selectedDmChannel.participants.find((participant) => participant.id !== session.id)?.id ?? '',
+                friendsState,
+              )}
+              onOpenProfile={openUserProfile}
+            />
+          ) : (
+            <FriendsHome
+              state={friendsState}
+              ownId={session.id}
+              onOpenProfile={openUserProfile}
+              onOpenDm={openDmWith}
+              onRefresh={friendsState.refresh}
+            />
+          )
+        ) : (
+        <>
         <header className="room-header">
           <div className="room-title">
             {activeTextChannel ? <span className="room-title-hash" aria-hidden="true">#</span> : <VoiceIcon size={18} />}
@@ -2491,6 +2591,8 @@ export function Workspace({ session, config, onSignOut, onProfileUpdated }: Work
             </aside>
           )}
         </div>
+        </>
+        )}
         </>
         )}
       </section>

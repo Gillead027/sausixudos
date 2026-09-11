@@ -125,6 +125,56 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_message_attachments_message
     ON message_attachments(message_id);
+
+  -- Uma linha por par (sempre user_id_a < user_id_b, ordem de string) evita
+  -- duplicar A-B/B-A. requested_by distingue PENDING_INCOMING de
+  -- PENDING_OUTGOING do ponto de vista de cada usuário (ver friendships.ts).
+  CREATE TABLE IF NOT EXISTS friendships (
+    user_id_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('PENDING', 'ACCEPTED')),
+    requested_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    responded_at INTEGER,
+    PRIMARY KEY (user_id_a, user_id_b),
+    CHECK (user_id_a < user_id_b)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_friendships_user_b ON friendships(user_id_b);
+
+  -- Direcional de propósito (bloquear não é simétrico) — sem ordenação canônica.
+  CREATE TABLE IF NOT EXISTS blocks (
+    blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (blocker_id, blocked_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
+
+  CREATE TABLE IF NOT EXISTS dm_channels (
+    id TEXT PRIMARY KEY,
+    user_id_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    last_message_at INTEGER,
+    CHECK (user_id_a < user_id_b),
+    UNIQUE (user_id_a, user_id_b)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_dm_channels_user_b ON dm_channels(user_id_b);
+
+  CREATE TABLE IF NOT EXISTS dm_messages (
+    id TEXT PRIMARY KEY,
+    dm_channel_id TEXT NOT NULL REFERENCES dm_channels(id) ON DELETE CASCADE,
+    sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    edited_at INTEGER
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_dm_messages_channel_created
+    ON dm_messages(dm_channel_id, created_at DESC);
 `);
 
 // O SausiMusic mantém um único player persistente por canal de texto. Limpa

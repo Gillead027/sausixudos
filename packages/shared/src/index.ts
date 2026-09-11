@@ -569,6 +569,65 @@ export interface TextMessage {
   attachments?: MessageAttachment[];
 }
 
+// Amizade é sempre entre 2 usuários — RawFriendshipStatus é o dado bruto tal
+// como fica no banco/evento de tempo real (linha existe ou não, e se existe
+// quem foi que pediu) — usado só entre servidor e o payload do WebSocket.
+// FriendshipStatus é a mesma informação já resolvida do ponto de vista de UM
+// usuário específico (o cliente deriva isso comparando o id de outro usuário
+// contra as listas já carregadas de amigos/pedidos — ver Friends.tsx).
+export type RawFriendshipStatus = 'NONE' | 'PENDING' | 'ACCEPTED';
+export type FriendshipStatus = 'NONE' | 'PENDING_OUTGOING' | 'PENDING_INCOMING' | 'ACCEPTED';
+
+export interface FriendSummary {
+  id: string;
+  displayName: string;
+  accentColor: AccentColor;
+  avatarUrl: string;
+  statusText: string;
+  since: number;
+  dmChannelId?: string;
+}
+
+export interface FriendRequestSummary {
+  userId: string;
+  displayName: string;
+  accentColor: AccentColor;
+  avatarUrl: string;
+  createdAt: number;
+}
+
+export interface BlockedUserSummary {
+  userId: string;
+  displayName: string;
+  accentColor: AccentColor;
+  avatarUrl: string;
+  createdAt: number;
+}
+
+export interface DmChannelParticipant {
+  id: string;
+  displayName: string;
+  accentColor: AccentColor;
+  avatarUrl: string;
+}
+
+export interface DmChannel {
+  id: string;
+  participants: [DmChannelParticipant, DmChannelParticipant];
+  createdAt: number;
+  lastMessageAt: number | null;
+}
+
+export interface DmMessage {
+  id: string;
+  dmChannelId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  sentAt: number;
+  editedAt?: number;
+}
+
 // Eventos empurrados pelo WebSocket da API (ver apps/api/src/realtime.ts) —
 // substituem os antigos loops de polling de mensagens/salas/canais no
 // cliente web. Uma única união discriminada mantém servidor e cliente no
@@ -591,4 +650,10 @@ export type RealtimeEvent =
   | { type: 'MEMBER_ROLES_UPDATE'; userId: string; roleIds: string[] }
   | { type: 'MEMBER_TIMEOUT_UPDATE'; userId: string; timeoutUntil: number | null }
   | { type: 'MEMBER_BANNED'; userId: string }
-  | { type: 'MEMBER_UNBANNED'; userId: string };
+  | { type: 'MEMBER_UNBANNED'; userId: string }
+  | { type: 'FRIENDSHIP_UPDATE'; participantIds: [string, string]; status: RawFriendshipStatus; requestedBy: string | null }
+  | { type: 'DM_CHANNEL_CREATE'; channel: DmChannel }
+  | { type: 'DM_MESSAGE_CREATE'; dmChannelId: string; message: DmMessage }
+  | { type: 'DM_MESSAGE_UPSERT'; dmChannelId: string; message: DmMessage }
+  | { type: 'DM_MESSAGE_DELETE'; dmChannelId: string; messageId: string }
+  | { type: 'BLOCK_UPDATE'; blockedUserId: string; blocked: boolean };

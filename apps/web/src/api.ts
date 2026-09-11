@@ -1,6 +1,11 @@
 import type {
   AccentColor,
   BanRecord,
+  BlockedUserSummary,
+  DmChannel,
+  DmMessage,
+  FriendRequestSummary,
+  FriendSummary,
   LiveKitTokenResponse,
   MemberSummary,
   MessageAttachment,
@@ -198,4 +203,33 @@ export const api = {
     request<void>(`/api/moderation/bans/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
   voiceKickMember: (userId: string) =>
     request<void>('/api/moderation/voice-kick', { method: 'POST', body: JSON.stringify({ userId }) }),
+  getFriends: () => request<{ friends: FriendSummary[] }>('/api/friends'),
+  getFriendRequests: () =>
+    request<{ incoming: FriendRequestSummary[]; outgoing: FriendRequestSummary[] }>('/api/friends/requests'),
+  sendFriendRequest: (userId: string) =>
+    request<{ status: 'PENDING' | 'ACCEPTED' }>(`/api/friends/${encodeURIComponent(userId)}`, { method: 'PUT' }),
+  removeFriendship: (userId: string) =>
+    request<void>(`/api/friends/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+  getBlocks: () => request<{ blocks: BlockedUserSummary[] }>('/api/blocks'),
+  blockUser: (userId: string) => request<void>(`/api/blocks/${encodeURIComponent(userId)}`, { method: 'PUT' }),
+  unblockUser: (userId: string) => request<void>(`/api/blocks/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+  getDmChannels: () => request<{ channels: DmChannel[] }>('/api/dm-channels'),
+  openDmChannel: (userId: string) =>
+    request<{ channel: DmChannel }>(`/api/dm-channels/${encodeURIComponent(userId)}`, { method: 'PUT' }),
+  getDmMessages: (dmChannelId: string) =>
+    request<{ messages: DmMessage[] }>(`/api/dm-channels/${encodeURIComponent(dmChannelId)}/messages`),
+  sendDmMessage: (dmChannelId: string, text: string) =>
+    request<{ message: DmMessage }>(`/api/dm-channels/${encodeURIComponent(dmChannelId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+  editDmMessage: (dmChannelId: string, messageId: string, text: string) =>
+    request<{ message: DmMessage }>(
+      `/api/dm-channels/${encodeURIComponent(dmChannelId)}/messages/${encodeURIComponent(messageId)}`,
+      { method: 'PATCH', body: JSON.stringify({ text }) },
+    ),
+  deleteDmMessage: (dmChannelId: string, messageId: string) =>
+    request<void>(`/api/dm-channels/${encodeURIComponent(dmChannelId)}/messages/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+    }),
 };

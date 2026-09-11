@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { ACCENT_COLORS, type Activity, type UserSession } from '@sausixudos/shared';
+import { ACCENT_COLORS, type Activity, type FriendshipStatus, type UserSession } from '@sausixudos/shared';
 import { api } from '../api';
 import { Avatar } from './Workspace';
 import { ActivityLine, ListeningActivityCard } from './ActivityDisplay';
-import { CloseIcon } from './Icons';
+import { BlockIcon, CloseIcon, MessageIcon, UserPlusIcon } from './Icons';
 
 export interface ProfilePopoverTarget {
   userId: string;
@@ -62,7 +62,14 @@ export function ProfilePopover({
   target,
   ownSession,
   activity,
+  relationship,
+  isBlockedByMe,
   onClose,
+  onSendFriendRequest,
+  onRemoveFriendship,
+  onBlockUser,
+  onUnblockUser,
+  onOpenDm,
 }: {
   target: ProfilePopoverTarget | null;
   ownSession: UserSession;
@@ -70,11 +77,22 @@ export function ProfilePopover({
   // também está (LiveKit não expõe metadata de quem não compartilha sala com
   // você) — ver Workspace.tsx, onde isso vem de typedParticipants ao vivo.
   activity?: Activity | null;
+  // Computado em Workspace.tsx a partir das listas já mantidas em tempo real
+  // (nunca guardado no remoteProfileCache abaixo, que nunca invalida — ver
+  // comentário na função useUserProfile).
+  relationship: FriendshipStatus;
+  isBlockedByMe: boolean;
   onClose: () => void;
+  onSendFriendRequest: (userId: string) => void;
+  onRemoveFriendship: (userId: string) => void;
+  onBlockUser: (userId: string) => void;
+  onUnblockUser: (userId: string) => void;
+  onOpenDm: (userId: string) => void;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const userId = target?.userId ?? '';
   const profile = useUserProfile(userId, ownSession);
+  const isOwnProfile = userId === ownSession.id;
 
   useEffect(() => {
     if (!target) return;
@@ -121,6 +139,41 @@ export function ProfilePopover({
             activity.kind === 'listening'
               ? <ListeningActivityCard activity={activity} />
               : <div className="profile-activity-line"><ActivityLine activity={activity} /></div>
+          )}
+          {!isOwnProfile && (
+            <div className="profile-popover-actions">
+              {relationship === 'NONE' && (
+                <button type="button" className="secondary-pill" onClick={() => onSendFriendRequest(userId)}>
+                  <UserPlusIcon size={13} /> Adicionar amigo
+                </button>
+              )}
+              {relationship === 'PENDING_OUTGOING' && (
+                <button type="button" className="secondary-pill" onClick={() => onRemoveFriendship(userId)}>
+                  Cancelar pedido
+                </button>
+              )}
+              {relationship === 'PENDING_INCOMING' && (
+                <>
+                  <button type="button" className="secondary-pill" onClick={() => onSendFriendRequest(userId)}>Aceitar pedido</button>
+                  <button type="button" className="secondary-pill" onClick={() => onRemoveFriendship(userId)}>Recusar</button>
+                </>
+              )}
+              {relationship === 'ACCEPTED' && (
+                <>
+                  <button type="button" className="secondary-pill" onClick={() => onOpenDm(userId)}>
+                    <MessageIcon size={13} /> Enviar mensagem
+                  </button>
+                  <button type="button" className="secondary-pill" onClick={() => onRemoveFriendship(userId)}>Remover amigo</button>
+                </>
+              )}
+              <button
+                type="button"
+                className="secondary-pill danger-pill"
+                onClick={() => (isBlockedByMe ? onUnblockUser(userId) : onBlockUser(userId))}
+              >
+                <BlockIcon size={13} /> {isBlockedByMe ? 'Desbloquear' : 'Bloquear'}
+              </button>
+            </div>
           )}
         </div>
       )}

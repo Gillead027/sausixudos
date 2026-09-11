@@ -15,10 +15,12 @@ interface TrackedSocket extends WebSocket {
   userId?: string;
 }
 
-// Todo mundo autenticado vê o mesmo servidor/canais hoje (não existe conceito
-// de múltiplos servidores/DMs ainda — ver DISCORD_PARITY_PLAN.md), então um
-// Set simples de conexões é suficiente: não há necessidade de indexar por
-// usuário enquanto nada precisa de envio direcionado a alguém específico.
+// Todo mundo autenticado vê o mesmo servidor/canais (não existe conceito de
+// múltiplos servidores ainda — ver DISCORD_PARITY_PLAN.md), então broadcast()
+// continua correto pra eventos de servidor. DMs/amizade, porém, precisam de
+// envio direcionado (ver sendToUsers abaixo) — cada socket já carrega
+// `userId` desde o handshake, então um Set simples com filtro linear resolve
+// isso sem precisar de um Map indexado (escala de um grupo de amigos).
 const clients = new Set<TrackedSocket>();
 
 export function broadcast(event: RealtimeEvent): void {
@@ -26,6 +28,22 @@ export function broadcast(event: RealtimeEvent): void {
   for (const client of clients) {
     if (client.readyState === client.OPEN) client.send(payload);
   }
+}
+
+// Manda um evento só pros usuários listados (ex.: os 2 participantes de um
+// DM) — cobre múltiplas abas/dispositivos do mesmo usuário automaticamente,
+// já que itera todos os sockets e filtra por userId, igual disconnectUser.
+export function sendToUsers(userIds: readonly string[], event: RealtimeEvent): void {
+  const payload = JSON.stringify(event);
+  for (const client of clients) {
+    if (client.userId && userIds.includes(client.userId) && client.readyState === client.OPEN) {
+      client.send(payload);
+    }
+  }
+}
+
+export function sendToUser(userId: string, event: RealtimeEvent): void {
+  sendToUsers([userId], event);
 }
 
 // Usado quando um usuário é banido — sem isso, o cookie continuaria válido

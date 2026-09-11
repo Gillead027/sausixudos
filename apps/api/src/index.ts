@@ -87,7 +87,7 @@ import { addReaction, isValidReactionEmoji, removeReaction } from './reactions.j
 import { authorizeMusicCommand } from './musicCommands.js';
 import { fetchMusicThumbnail } from './musicThumbnails.js';
 import { authorizeVoiceDisconnect } from './voiceModeration.js';
-import { attachRealtime, broadcast, disconnectUser } from './realtime.js';
+import { attachRealtime, broadcast, disconnectUser, sendToUser, sendToUsers } from './realtime.js';
 import {
   createVoiceChannel,
   deleteVoiceChannel,
@@ -121,6 +121,25 @@ import {
   updateRole,
 } from './roles.js';
 import { authorizeModerationAction, banUser, isBanned, listBans, unbanUser } from './moderation.js';
+import {
+  getFriendshipBetween,
+  listFriends,
+  listIncomingRequests,
+  listOutgoingRequests,
+  removeFriendship,
+  sendOrAcceptFriendRequest,
+} from './friendships.js';
+import { blockUser, isBlocked, listBlockedUsers, unblockUser } from './blocks.js';
+import {
+  createDmMessage,
+  deleteDmMessage,
+  editDmMessage,
+  getDmChannelForParticipant,
+  getDmMessageById,
+  listDmChannelsForUser,
+  listDmMessages,
+  openDmChannel,
+} from './dmChannels.js';
 
 const app = express();
 const roomService = new RoomServiceClient(
@@ -200,6 +219,30 @@ const uploadLimiter = rateLimit({
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: ATTACHMENT_MAX_SIZE_BYTES, files: 1 },
+});
+
+const friendLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Muitas ações de amizade em pouco tempo.' },
+});
+
+const dmChannelLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Limite de novas conversas atingido. Tente novamente mais tarde.' },
+});
+
+const dmMessageLimiter = rateLimit({
+  windowMs: 10 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Você está enviando mensagens rápido demais.' },
 });
 
 // Envolve o middleware do multer manualmente pra devolver um erro amigável
@@ -299,6 +342,10 @@ const textMessageSchema = z.object({
 
 const reactionSchema = z.object({
   emoji: z.string().refine(isValidReactionEmoji, 'Emoji não suportado.'),
+});
+
+const dmMessageSchema = z.object({
+  text: z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH),
 });
 
 const ALL_PERMISSIONS_MASK = Object.values(Permission).reduce((mask, flag) => mask | flag, 0);
@@ -1221,6 +1268,220 @@ app.delete(
 
 app.get('/api/members', requireSession, (_request, response) => {
   response.json({ members: listMembers() });
+});
+
+app.get('/api/friends', requireSession, (_request, response) => {
+  const user = currentUser(response);
+  const dmChannelByOtherUser = new Map(
+    listDmChannelsForUser(user.id).map((channel) => {
+      const other = channel.participants.find((participant) => participant.id !== user.id)!;
+      return [other.id, channel.id] as const;
+    }),
+  );
+  const friends = listFriends(user.id).map((friend) =>
+    dmChannelByOtherUser.has(friend.id) ? { ...friend, dmChannelId: dmChannelByOtherUser.get(friend.id) } : friend,
+  );
+  response.json({ friends });
+});
+
+app.get('/api/friends/requests', requireSession, (_request, response) => {
+  const user = currentUser(response);
+  response.json({ incoming: listIncomingRequests(user.id), outgoing: listOutgoingRequests(user.id) });
+});
+
+app.put('/api/friends/:userId', requireSession, friendLimiter, (request, response) => {
+  const targetId = request.params.userId;
+  const target = typeof targetId === 'string' ? getUserById(targetId) : undefined;
+  if (!target) {
+    response.status(404).json({ error: 'Usuário não encontrado.' });
+    return;
+  }
+  const user = currentUser(response);
+  const result = sendOrAcceptFriendRequest(user.id, target.id);
+  if (!result.ok) {
+    const messagesByReason = {
+      SELF: 'Você não pode adicionar a si mesmo.',
+      BLOCKED: 'Não foi possível enviar o pedido de amizade.',
+      ALREADY_REQUESTED: 'Você já enviou um pedido de amizade pra essa pessoa.',
+      ALREADY_FRIENDS: 'Vocês já são amigos.',
+    } satisfies Record<typeof result.reason, string>;
+    const status = result.reason === 'SELF' || result.reason === 'BLOCKED' ? 400 : 409;
+    response.status(status).json({ error: messagesByReason[result.reason] });
+    return;
+  }
+  const { status: friendshipStatus, requestedBy } = getFriendshipBetween(user.id, target.id);
+  sendToUsers([user.id, target.id], {
+    type: 'FRIENDSHIP_UPDATE',
+    participantIds: [user.id, target.id],
+    status: friendshipStatus,
+    requestedBy,
+  });
+  response.status(result.status === 'ACCEPTED' ? 200 : 201).json({ status: result.status });
+});
+
+app.delete('/api/friends/:userId', requireSession, (request, response) => {
+  const targetId = request.params.userId;
+  const user = currentUser(response);
+  if (typeof targetId !== 'string' || !removeFriendship(user.id, targetId).ok) {
+    response.status(404).json({ error: 'Relação não encontrada.' });
+    return;
+  }
+  sendToUsers([user.id, targetId], {
+    type: 'FRIENDSHIP_UPDATE',
+    participantIds: [user.id, targetId],
+    status: 'NONE',
+    requestedBy: null,
+  });
+  response.status(204).end();
+});
+
+app.get('/api/blocks', requireSession, (_request, response) => {
+  response.json({ blocks: listBlockedUsers(currentUser(response).id) });
+});
+
+app.put('/api/blocks/:userId', requireSession, friendLimiter, (request, response) => {
+  const targetId = request.params.userId;
+  const target = typeof targetId === 'string' ? getUserById(targetId) : undefined;
+  if (!target) {
+    response.status(404).json({ error: 'Usuário não encontrado.' });
+    return;
+  }
+  const user = currentUser(response);
+  const result = blockUser(user.id, target.id);
+  if (!result.ok) {
+    response.status(400).json({ error: 'Você não pode bloquear a si mesmo.' });
+    return;
+  }
+  if (result.friendshipRemoved) {
+    sendToUsers([user.id, target.id], {
+      type: 'FRIENDSHIP_UPDATE',
+      participantIds: [user.id, target.id],
+      status: 'NONE',
+      requestedBy: null,
+    });
+  }
+  sendToUser(user.id, { type: 'BLOCK_UPDATE', blockedUserId: target.id, blocked: true });
+  response.status(204).end();
+});
+
+app.delete('/api/blocks/:userId', requireSession, (request, response) => {
+  const targetId = request.params.userId;
+  const user = currentUser(response);
+  if (typeof targetId !== 'string' || !unblockUser(user.id, targetId)) {
+    response.status(404).json({ error: 'Você não bloqueou essa pessoa.' });
+    return;
+  }
+  sendToUser(user.id, { type: 'BLOCK_UPDATE', blockedUserId: targetId, blocked: false });
+  response.status(204).end();
+});
+
+app.get('/api/dm-channels', requireSession, (_request, response) => {
+  response.json({ channels: listDmChannelsForUser(currentUser(response).id) });
+});
+
+app.put('/api/dm-channels/:userId', requireSession, dmChannelLimiter, (request, response) => {
+  const targetId = request.params.userId;
+  const target = typeof targetId === 'string' ? getUserById(targetId) : undefined;
+  if (!target) {
+    response.status(404).json({ error: 'Usuário não encontrado.' });
+    return;
+  }
+  const user = currentUser(response);
+  const result = openDmChannel(user.id, target.id);
+  if (!result.ok) {
+    response.status(403).json({ error: 'Vocês precisam ser amigos pra abrir uma conversa.' });
+    return;
+  }
+  if (result.created) {
+    sendToUsers([user.id, target.id], { type: 'DM_CHANNEL_CREATE', channel: result.channel });
+  }
+  response.status(result.created ? 201 : 200).json({ channel: result.channel });
+});
+
+app.get('/api/dm-channels/:dmChannelId/messages', requireSession, (request, response) => {
+  const dmChannelId = request.params.dmChannelId;
+  const user = currentUser(response);
+  const channel = typeof dmChannelId === 'string' ? getDmChannelForParticipant(dmChannelId, user.id) : undefined;
+  if (!channel) {
+    response.status(404).json({ error: 'Conversa não encontrada.' });
+    return;
+  }
+  response.json({ messages: listDmMessages(channel.id) });
+});
+
+app.post('/api/dm-channels/:dmChannelId/messages', requireSession, dmMessageLimiter, (request, response) => {
+  const dmChannelId = request.params.dmChannelId;
+  const user = currentUser(response);
+  const channel = typeof dmChannelId === 'string' ? getDmChannelForParticipant(dmChannelId, user.id) : undefined;
+  if (!channel) {
+    response.status(404).json({ error: 'Conversa não encontrada.' });
+    return;
+  }
+  const body = dmMessageSchema.safeParse(request.body);
+  if (!body.success) {
+    response.status(400).json({ error: 'A mensagem deve ter entre 1 e 500 caracteres.' });
+    return;
+  }
+  if (rejectIfTimedOut(user, response)) return;
+  const other = channel.participants.find((participant) => participant.id !== user.id)!;
+  if (isBlocked(user.id, other.id)) {
+    response.status(403).json({ error: 'Não foi possível enviar a mensagem agora.' });
+    return;
+  }
+  const message = createDmMessage(channel.id, body.data.text, user);
+  sendToUsers([user.id, other.id], { type: 'DM_MESSAGE_CREATE', dmChannelId: channel.id, message });
+  response.status(201).json({ message });
+});
+
+app.patch('/api/dm-channels/:dmChannelId/messages/:messageId', requireSession, dmMessageLimiter, (request, response) => {
+  const dmChannelId = request.params.dmChannelId;
+  const messageId = request.params.messageId;
+  const user = currentUser(response);
+  const channel = typeof dmChannelId === 'string' ? getDmChannelForParticipant(dmChannelId, user.id) : undefined;
+  if (!channel || typeof messageId !== 'string') {
+    response.status(404).json({ error: 'Conversa não encontrada.' });
+    return;
+  }
+  const body = dmMessageSchema.safeParse(request.body);
+  if (!body.success) {
+    response.status(400).json({ error: 'A mensagem deve ter entre 1 e 500 caracteres.' });
+    return;
+  }
+  const result = editDmMessage(channel.id, messageId, body.data.text, user.id);
+  if (!result.ok) {
+    if (result.reason === 'FORBIDDEN') {
+      response.status(403).json({ error: 'Você só pode editar suas próprias mensagens.' });
+    } else {
+      response.status(404).json({ error: 'Mensagem não encontrada.' });
+    }
+    return;
+  }
+  const other = channel.participants.find((participant) => participant.id !== user.id)!;
+  sendToUsers([user.id, other.id], { type: 'DM_MESSAGE_UPSERT', dmChannelId: channel.id, message: result.message });
+  response.json({ message: result.message });
+});
+
+app.delete('/api/dm-channels/:dmChannelId/messages/:messageId', requireSession, (request, response) => {
+  const dmChannelId = request.params.dmChannelId;
+  const messageId = request.params.messageId;
+  const user = currentUser(response);
+  const channel = typeof dmChannelId === 'string' ? getDmChannelForParticipant(dmChannelId, user.id) : undefined;
+  if (!channel || typeof messageId !== 'string') {
+    response.status(404).json({ error: 'Conversa não encontrada.' });
+    return;
+  }
+  const result = deleteDmMessage(channel.id, messageId, user.id);
+  if (!result.ok) {
+    if (result.reason === 'FORBIDDEN') {
+      response.status(403).json({ error: 'Você só pode apagar suas próprias mensagens.' });
+    } else {
+      response.status(404).json({ error: 'Mensagem não encontrada.' });
+    }
+    return;
+  }
+  const other = channel.participants.find((participant) => participant.id !== user.id)!;
+  sendToUsers([user.id, other.id], { type: 'DM_MESSAGE_DELETE', dmChannelId: channel.id, messageId });
+  response.status(204).end();
 });
 
 app.post(
